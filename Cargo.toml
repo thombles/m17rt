@@ -1,0 +1,5 @@
+[workspace]
+resolver = "2"
+members = [ "demod",
+    "m17app", "m17codec2", "m17core",
+]

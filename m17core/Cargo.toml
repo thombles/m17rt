@@ -1,0 +1,13 @@
+[package]
+name = "m17core"
+version = "0.1.0"
+edition = "2021"
+keywords = ["amateur", "radio", "m17", "ham", "no_std"]
+license = "MIT"
+authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
+repository = "https://code.octet-stream.net/m17rt"
+
+[dependencies]
+cai_golay = "0.1.1"
+crc = "3.2.1"
+log = "0.4.22"
