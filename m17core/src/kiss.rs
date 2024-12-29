@@ -22,12 +22,21 @@ pub const MAX_FRAME_LEN: usize = 1713;
 ///
 /// For efficiency, `data` and `len` are exposed directly and received KISS data may
 /// be streamed directly into a pre-allocated `KissFrame`.
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KissFrame {
     pub data: [u8; MAX_FRAME_LEN],
     pub len: usize,
 }
 
 impl KissFrame {
+    /// Construct empty frame
+    pub fn new_empty() -> Self {
+        Self {
+            data: [0u8; MAX_FRAME_LEN],
+            len: 0,
+        }
+    }
+
     /// Request to transmit a data packet (basic mode).
     ///
     /// A raw payload up to 822 bytes can be provided. The TNC will mark it as Raw format
@@ -236,6 +245,7 @@ fn push(data: &mut [u8], idx: &mut usize, value: u8) {
     *idx += 1;
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum KissCommand {
     DataFrame,
     TxDelay,
@@ -261,6 +271,114 @@ impl KissCommand {
             KissCommand::P => 2,
             KissCommand::FullDuplex => 5,
         }
+    }
+}
+
+/// Accepts raw KISS data and emits one frame at a time.
+///
+/// A frame will be emitted if there is at least one byte between FEND markers. It is up to the consumer
+/// to determine whether it's actually a valid frame.
+pub struct KissBuffer {
+    /// Provisional frame, whose buffer might contain more than one sequential frame at a time
+    frame: KissFrame,
+    /// Number of bytes that have been written into `frame.data`, which may be more than the the length
+    /// of the first valid frame, `frame.len`.
+    written: usize,
+    /// Whether we have emitted the first frame in `frame`'s buffer and now need to flush it out.
+    first_frame_returned: bool,
+}
+
+impl KissBuffer {
+    /// Create new buffer
+    pub fn new() -> Self {
+        Self {
+            frame: KissFrame::new_empty(),
+            written: 0,
+            first_frame_returned: false,
+        }
+    }
+
+    /// Return the space remaining for more data
+    pub fn buf_remaining(&mut self) -> &mut [u8] {
+        self.flush_first_frame();
+        if self.written == self.frame.data.len() {
+            // full buffer with no data means oversized frame
+            // sender is doing something weird or a FEND got dropped
+            // either way: flush it all and try to sync up again
+            self.written = 0;
+        }
+        &mut self.frame.data[self.written..]
+    }
+
+    /// Indicate how much data was written into the buffer provided by `buf_remaining()`.
+    pub fn did_write(&mut self, len: usize) {
+        self.written += len;
+    }
+
+    /// Try to construct and retrieve the next frame in the buffer
+    pub fn next_frame(&mut self) -> Option<&KissFrame> {
+        self.flush_first_frame();
+
+        // If we have any data without a leading FEND, scan past it
+        let mut i = 0;
+        while i < self.written && self.frame.data[i] != FEND {
+            i += 1;
+        }
+        self.move_to_start(i);
+
+        // If we do have a leading FEND, scan up up to the last one in the series
+        i = 0;
+        while (i + 1) < self.written && self.frame.data[i + 1] == FEND {
+            i += 1;
+        }
+        if i != 0 {
+            self.move_to_start(i);
+        }
+
+        // Now, if we have FEND-something-FEND, return it
+        if self.written >= 2 && self.frame.data[0] == FEND && self.frame.data[1] != FEND {
+            i = 2;
+            while i < self.written && self.frame.data[i] != FEND {
+                i += 1;
+            }
+            if i < self.written && self.frame.data[i] == FEND {
+                self.frame.len = i + 1;
+                self.first_frame_returned = true;
+                return Some(&self.frame);
+            }
+        }
+
+        None
+    }
+
+    /// Check if we just returned a frame; if so, clear it out and position the buffer for the next frame.
+    fn flush_first_frame(&mut self) {
+        if !self.first_frame_returned {
+            return;
+        }
+        self.first_frame_returned = false;
+        // If we have previously returned a valid frame, in the simplest case `frame.data` contains FEND-something-FEND
+        // So to find the trailing FEND we can start at index 2
+        // Loop forward until we find that FEND, which must exist, and leave its index in `i`
+        let mut i = 2;
+        while self.frame.data[i] != FEND {
+            i += 1;
+        }
+        // However if we have consecutive trailing FENDs we want to ignore them
+        // Having found the trailing FEND, increment past any additional FENDs until we reach the end or something else
+        while (i + 1) < self.written && self.frame.data[i + 1] == FEND {
+            i += 1;
+        }
+        // Now take that final FEND and make it the start of our frame
+        self.move_to_start(i);
+    }
+
+    /// Shift all data in the buffer back to the beginning starting from the given index.
+    fn move_to_start(&mut self, idx: usize) {
+        for i in idx..self.written {
+            self.frame.data[i - idx] = self.frame.data[i];
+        }
+        self.written -= idx;
     }
 }
 
@@ -378,5 +496,104 @@ mod tests {
         let mut buf = [0u8; 1024];
         let n = f.decode_payload(&mut buf).unwrap();
         assert_eq!(&buf[..n], &[0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_buffer_basic() {
+        let mut buffer = KissBuffer::new();
+
+        // initial write is not a complete frame
+        let buf = buffer.buf_remaining();
+        buf[0] = FEND;
+        buffer.did_write(1);
+        assert!(buffer.next_frame().is_none());
+
+        // complete the frame
+        let buf = buffer.buf_remaining();
+        buf[0] = 0x10;
+        buf[1] = 0x01;
+        buf[2] = FEND;
+        buffer.did_write(3);
+
+        // everything should parse
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.len, 4);
+        assert_eq!(&next.data[0..4], &[FEND, 0x10, 0x01, FEND]);
+        assert_eq!(next.port().unwrap(), 1);
+        assert_eq!(next.command().unwrap(), KissCommand::DataFrame);
+        let mut payload_buf = [0u8; 1024];
+        let n = next.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(&payload_buf[0..n], &[0x01]);
+    }
+
+    #[test]
+    fn test_buffer_double() {
+        let mut buffer = KissBuffer::new();
+        let buf = buffer.buf_remaining();
+        buf[0..8].copy_from_slice(&[FEND, 0x10, 0x01, FEND, FEND, 0x20, 02, FEND]);
+        buffer.did_write(8);
+
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 1);
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 2);
+        assert!(buffer.next_frame().is_none());
+    }
+
+    #[test]
+    fn test_buffer_double_shared_fend() {
+        let mut buffer = KissBuffer::new();
+        let buf = buffer.buf_remaining();
+        buf[0..7].copy_from_slice(&[FEND, 0x10, 0x01, FEND, 0x20, 02, FEND]);
+        buffer.did_write(7);
+
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 1);
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 2);
+        assert!(buffer.next_frame().is_none());
+    }
+
+    #[test]
+    fn test_buffer_extra_fend() {
+        let mut buffer = KissBuffer::new();
+        let buf = buffer.buf_remaining();
+        buf[0..10].copy_from_slice(&[FEND, FEND, FEND, 0x10, 0x01, FEND, FEND, 0x20, 02, FEND]);
+        buffer.did_write(10);
+
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 1);
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 2);
+        assert!(buffer.next_frame().is_none());
+    }
+
+    #[test]
+    fn test_buffer_oversize_frame() {
+        let mut buffer = KissBuffer::new();
+        let buf = buffer.buf_remaining();
+        buf[0] = FEND;
+        let len = buf.len();
+        assert_eq!(len, MAX_FRAME_LEN);
+        buffer.did_write(len);
+        assert!(buffer.next_frame().is_none());
+
+        let buf = buffer.buf_remaining();
+        let len = buf.len();
+        assert_eq!(len, MAX_FRAME_LEN); // should have flushed
+        for i in 0..len / 2 {
+            buf[i] = 0x00;
+        }
+        buffer.did_write(len / 2);
+        assert!(buffer.next_frame().is_none());
+
+        // confirm we resync if input goes back to normal
+        let buf = buffer.buf_remaining();
+        buf[0..4].copy_from_slice(&[FEND, 0x10, 0x01, FEND]);
+        buffer.did_write(4);
+        let next = buffer.next_frame().unwrap();
+        assert_eq!(next.port().unwrap(), 1);
+        assert!(buffer.next_frame().is_none());
     }
 }
