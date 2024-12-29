@@ -1,5 +1,5 @@
 use crate::tnc::Tnc;
-use m17core::kiss::KissFrame;
+use m17core::kiss::{KissBuffer, KissCommand, KissFrame};
 use m17core::protocol::PacketType;
 use m17core::traits::{PacketListener, StreamListener};
 
@@ -105,20 +105,31 @@ enum TncControlEvent {
 
 fn spawn_reader<T: Tnc + Send + 'static>(mut tnc: T, listeners: Arc<RwLock<Listeners>>) {
     std::thread::spawn(move || {
-        let mut buf = [0u8; 1713];
-        let mut n = 0;
+        let mut kiss_buffer = KissBuffer::new();
         loop {
-            // I want to call tnc.read() here
-            // Probably these needs a helper in m17core::kiss? It will be common to both TNC and host
-
-            // After a read...
-            // if this does not start with FEND, forget all data up until first FEND
-            // if we start with a FEND, see if there is another FEND with at least one byte between
-            // for each such case, turn that FEND..=FEND slice into a KissFrame and attempt to parse it
-            // once all such pairs have been handled...
-            // move the last FEND onwards back to the start of the buffer
-            //   - if there is no room to do so, this is an oversize frame. purge everything and carry on.
-            // perform next read from end
+            let mut buf = kiss_buffer.buf_remaining();
+            let n = match tnc.read(&mut buf) {
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            kiss_buffer.did_write(n);
+            while let Some(frame) = kiss_buffer.next_frame() {
+                if frame.command() != Ok(KissCommand::DataFrame) {
+                    continue;
+                }
+                match frame.port() {
+                    Ok(0) => {
+                        // handle basic frame and send it to subscribers
+                    }
+                    Ok(1) => {
+                        // handle full frame and send it to subscribers - I guess they need to know the type, probably not the CRC
+                    }
+                    Ok(2) => {
+                        // handle stream and send it to subscribers
+                    }
+                    _ => (),
+                }
+            }
         }
     });
 }

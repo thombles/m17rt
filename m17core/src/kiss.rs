@@ -382,7 +382,7 @@ impl KissBuffer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum KissError {
     MalformedKissFrame,
     UnsupportedKissCommand,
