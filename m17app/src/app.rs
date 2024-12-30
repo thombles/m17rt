@@ -1,11 +1,10 @@
+use crate::adapter::{PacketAdapter, StreamAdapter};
 use crate::tnc::Tnc;
 use m17core::kiss::{KissBuffer, KissCommand, KissFrame};
-use m17core::protocol::PacketType;
-use m17core::traits::{PacketListener, StreamListener};
+use m17core::protocol::{EncryptionType, LsfFrame, PacketType};
 
 use log::debug;
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 
@@ -27,19 +26,19 @@ impl M17App {
         }
     }
 
-    pub fn add_packet_listener<P: PacketListener + 'static>(&self, listener: P) -> usize {
+    pub fn add_packet_listener<P: PacketAdapter + 'static>(&self, listener: P) -> usize {
         let mut listeners = self.listeners.write().unwrap();
         let id = listeners.next;
         listeners.next += 1;
-        listeners.packet.insert(id, Box::new(listener));
+        listeners.packet.insert(id, Arc::new(listener));
         id
     }
 
-    pub fn add_stream_listener<S: StreamListener + 'static>(&self, listener: S) -> usize {
+    pub fn add_stream_listener<S: StreamAdapter + 'static>(&self, listener: S) -> usize {
         let mut listeners = self.listeners.write().unwrap();
         let id = listeners.next;
         listeners.next += 1;
-        listeners.stream.insert(id, Box::new(listener));
+        listeners.stream.insert(id, Arc::new(listener));
         id
     }
 
@@ -59,13 +58,12 @@ impl M17App {
         // we will immediately convert this into a KISS payload before sending into channel so we only need borrow on data
     }
 
-    // add more methods here for stream outgoing
-
-    pub fn transmit_stream_start(&self /* lsf?, payload? what needs to be configured ?! */) {}
-
-    // as long as there is only one TNC it is implied there is only ever one stream transmission in flight
-
-    pub fn transmit_stream_next(&self, /* next payload,  */ end_of_stream: bool) {}
+    /// Create a handle that can be used to transmit data on the TNC
+    pub fn tx(&self) -> TxHandle {
+        TxHandle {
+            event_tx: self.event_tx.clone(),
+        }
+    }
 
     pub fn start(&self) {
         let _ = self.event_tx.send(TncControlEvent::Start);
@@ -76,14 +74,28 @@ impl M17App {
     }
 }
 
+pub struct TxHandle {
+    event_tx: mpsc::SyncSender<TncControlEvent>,
+}
+
+impl TxHandle {
+    // add more methods here for stream outgoing
+
+    pub fn transmit_stream_start(&self /* lsf?, payload? what needs to be configured ?! */) {}
+
+    // as long as there is only one TNC it is implied there is only ever one stream transmission in flight
+
+    pub fn transmit_stream_next(&self, /* next payload,  */ end_of_stream: bool) {}
+}
+
 /// Synchronised structure for listeners subscribing to packets and streams.
 ///
 /// Each listener will be notified in turn of each event.
 struct Listeners {
     /// Identifier to be assigned to the next listener, starting from 0
     next: usize,
-    packet: HashMap<usize, Box<dyn PacketListener>>,
-    stream: HashMap<usize, Box<dyn StreamListener>>,
+    packet: HashMap<usize, Arc<dyn PacketAdapter>>,
+    stream: HashMap<usize, Arc<dyn StreamAdapter>>,
 }
 
 impl Listeners {
@@ -118,13 +130,57 @@ fn spawn_reader<T: Tnc + Send + 'static>(mut tnc: T, listeners: Arc<RwLock<Liste
                     continue;
                 }
                 match frame.port() {
-                    Ok(0) => {
-                        // handle basic frame and send it to subscribers
+                    Ok(m17core::kiss::PORT_PACKET_BASIC) => {
+                        // no action
+                        // we will handle the more full-featured version from from port 1
                     }
-                    Ok(1) => {
-                        // handle full frame and send it to subscribers - I guess they need to know the type, probably not the CRC
+                    Ok(m17core::kiss::PORT_PACKET_FULL) => {
+                        let mut payload = [0u8; 855]; // 30 byte LSF + 825 byte packet including CRC
+                        let Ok(n) = frame.decode_payload(&mut payload) else {
+                            debug!("failed to decode payload from KISS frame");
+                            continue;
+                        };
+                        if n < 33 {
+                            debug!("unusually short full packet frame");
+                            continue;
+                        }
+                        let lsf = LsfFrame(payload[0..30].try_into().unwrap());
+                        if lsf.crc() != 0 {
+                            debug!("LSF in full packet frame did not pass CRC");
+                            continue;
+                        }
+                        if lsf.encryption_type() != EncryptionType::None {
+                            debug!("we only understand None encryption for now - skipping packet");
+                            continue;
+                        }
+                        let Some((packet_type, type_len)) = PacketType::from_proto(&payload[30..n])
+                        else {
+                            debug!("failed to decode packet type");
+                            continue;
+                        };
+                        if (n - 30 - type_len) < 2 {
+                            debug!("packet payload too small to provide CRC");
+                            continue;
+                        }
+                        let packet_crc = m17core::crc::m17_crc(&payload[30..n]);
+                        if packet_crc != 0 {
+                            debug!("packet CRC does not pass");
+                            continue;
+                        }
+                        let packet_payload: Arc<[u8]> =
+                            Arc::from(&payload[(30 + type_len)..(n - 2)]);
+
+                        let subs: Vec<_> =
+                            listeners.read().unwrap().packet.values().cloned().collect();
+                        for s in subs {
+                            s.packet_received(
+                                lsf.clone(),
+                                packet_type.clone(),
+                                packet_payload.clone(),
+                            );
+                        }
                     }
-                    Ok(2) => {
+                    Ok(m17core::kiss::PORT_STREAM) => {
                         // handle stream and send it to subscribers
                     }
                     _ => (),

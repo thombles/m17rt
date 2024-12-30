@@ -33,6 +33,7 @@ pub enum Frame {
     // BERT
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PacketType {
     /// RAW
     Raw,
@@ -53,6 +54,22 @@ pub enum PacketType {
 }
 
 impl PacketType {
+    pub fn from_proto(buf: &[u8]) -> Option<(Self, usize)> {
+        buf.utf8_chunks()
+            .next()
+            .and_then(|chunk| chunk.valid().chars().next())
+            .map(|c| match c as u32 {
+                0x00 => (PacketType::Raw, 1),
+                0x01 => (PacketType::Ax25, 1),
+                0x02 => (PacketType::Aprs, 1),
+                0x03 => (PacketType::SixLowPan, 1),
+                0x04 => (PacketType::Ipv4, 1),
+                0x05 => (PacketType::Sms, 1),
+                0x06 => (PacketType::Winlink, 1),
+                _ => (PacketType::Other(c), c.len_utf8()),
+            })
+    }
+
     pub fn as_proto(&self) -> ([u8; 4], usize) {
         match self {
             PacketType::Raw => ([0, 0, 0, 0], 1),
@@ -69,22 +86,6 @@ impl PacketType {
                 (buf, len)
             }
         }
-    }
-
-    pub fn from_proto(&self, buf: &[u8]) -> Option<PacketType> {
-        buf.utf8_chunks()
-            .next()
-            .and_then(|chunk| chunk.valid().chars().next())
-            .map(|c| match c as u32 {
-                0x00 => PacketType::Raw,
-                0x01 => PacketType::Ax25,
-                0x02 => PacketType::Aprs,
-                0x03 => PacketType::SixLowPan,
-                0x04 => PacketType::Ipv4,
-                0x05 => PacketType::Sms,
-                0x06 => PacketType::Winlink,
-                _ => PacketType::Other(c),
-            })
     }
 }
 
