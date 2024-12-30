@@ -60,14 +60,6 @@ impl M17App {
         }
     }
 
-    pub fn transmit_packet(&self, packet_type: PacketType, payload: &[u8]) {
-        // hang on where do we get the LSF details from? We need a destination obviously
-        // our source address needs to be configured here too
-        // also there is possible CAN, encryption, meta payload
-
-        // we will immediately convert this into a KISS payload before sending into channel so we only need borrow on data
-    }
-
     /// Create a handle that can be used to transmit data on the TNC
     pub fn tx(&self) -> TxHandle {
         TxHandle {
@@ -89,6 +81,14 @@ pub struct TxHandle {
 }
 
 impl TxHandle {
+    pub fn transmit_packet(&self, packet_type: PacketType, payload: &[u8]) {
+        // hang on where do we get the LSF details from? We need a destination obviously
+        // our source address needs to be configured here too
+        // also there is possible CAN, encryption, meta payload
+
+        // we will immediately convert this into a KISS payload before sending into channel so we only need borrow on data
+    }
+
     // add more methods here for stream outgoing
 
     pub fn transmit_stream_start(&self /* lsf?, payload? what needs to be configured ?! */) {}
