@@ -133,6 +133,8 @@ impl LsfFrame {
         }
     }
 
+    // TODO: encryption sub-type
+
     pub fn channel_access_number(&self) -> u8 {
         (self.0[12] >> 7) & 0x0f
     }
