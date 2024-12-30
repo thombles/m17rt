@@ -17,9 +17,9 @@ pub trait StreamAdapter: Send + Sync + 'static {
     fn tnc_closed(&self);
     fn stream_began(&self, lsf: LsfFrame);
     fn stream_data(&self, frame_number: u16, is_final: bool, data: Arc<[u8; 16]>);
-    fn stream_lost(&self);
 
     // TODO
+    // fn stream_lost(&self);
     // fn stream_assembled_text_block()
     // fn stream_gnss_data()
     // fn stream_extended_callsign_data()
