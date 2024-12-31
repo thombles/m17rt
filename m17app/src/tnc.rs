@@ -19,7 +19,7 @@ pub enum TncError {
 
 impl Tnc for std::net::TcpStream {
     fn try_clone(&mut self) -> Result<Self, TncError> {
-        self.try_clone().map_err(|_| TncError::Unknown)
+        std::net::TcpStream::try_clone(self).map_err(|_| TncError::Unknown)
     }
 
     fn start(&mut self) -> Result<(), TncError> {
