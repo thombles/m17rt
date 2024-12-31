@@ -1,60 +1,34 @@
-use std::io::{self, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
-use m17core::tnc::SoftTnc;
-
+/// A TNC that supports reading and writing M17 KISS messages.
 ///
-pub trait Tnc: Read + Write + Sized {
+/// TNCs must be cloneable to support reading and writing from different threads,
+/// via a working implementation of try_clone(). We do not require `Clone` directly
+/// as this could not be fulfilled by `TcpStream`.
+pub trait Tnc: Read + Write + Sized + Send + 'static {
     fn try_clone(&mut self) -> Result<Self, TncError>;
     fn start(&mut self) -> Result<(), TncError>;
     fn close(&mut self) -> Result<(), TncError>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TncError {
-    General(String),
+    // TODO: Good error cases
+    Unknown,
 }
 
-// TODO: move the following to its own module
-
-pub struct Soundmodem {
-    tnc: SoftTnc,
-    config: SoundmodemConfig,
-}
-
-pub struct SoundmodemConfig {
-    // sound cards, PTT, etc.
-}
-
-impl Read for Soundmodem {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.tnc
-            .read_kiss(buf)
-            .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))
-    }
-}
-
-impl Write for Soundmodem {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.tnc
-            .write_kiss(buf)
-            .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Tnc for Soundmodem {
+impl Tnc for std::net::TcpStream {
     fn try_clone(&mut self) -> Result<Self, TncError> {
-        unimplemented!();
+        self.try_clone().map_err(|_| TncError::Unknown)
     }
 
     fn start(&mut self) -> Result<(), TncError> {
-        unimplemented!();
+        // already started, hopefully we get onto reading the socket quickly
+        Ok(())
     }
 
     fn close(&mut self) -> Result<(), TncError> {
-        unimplemented!();
+        self.shutdown(std::net::Shutdown::Both)
+            .map_err(|_| TncError::Unknown)
     }
 }

@@ -12,7 +12,7 @@ impl SoftTnc {
         Ok(())
     }
 
-    ///
+    /// Update the number of samples that have been received by the incoming stream, as a form of timekeeping
     pub fn advance_samples(&mut self, _samples: u64) {}
 
     pub fn set_data_carrier_detect(&mut self, _dcd: bool) {}

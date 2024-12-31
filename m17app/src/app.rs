@@ -125,7 +125,7 @@ enum TncControlEvent {
     Close,
 }
 
-fn spawn_reader<T: Tnc + Send + 'static>(mut tnc: T, adapters: Arc<RwLock<Adapters>>) {
+fn spawn_reader<T: Tnc>(mut tnc: T, adapters: Arc<RwLock<Adapters>>) {
     std::thread::spawn(move || {
         let mut kiss_buffer = KissBuffer::new();
         let mut stream_running = false;
@@ -241,7 +241,7 @@ fn spawn_reader<T: Tnc + Send + 'static>(mut tnc: T, adapters: Arc<RwLock<Adapte
     });
 }
 
-fn spawn_writer<T: Tnc + Send + 'static>(mut tnc: T, event_rx: mpsc::Receiver<TncControlEvent>) {
+fn spawn_writer<T: Tnc>(mut tnc: T, event_rx: mpsc::Receiver<TncControlEvent>) {
     std::thread::spawn(move || {
         while let Ok(ev) = event_rx.recv() {
             match ev {
