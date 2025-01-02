@@ -40,6 +40,8 @@ impl SoftTnc {
                         })
                     }
                     Mode::Stream => {
+                        let kiss = KissFrame::new_stream_setup(&lsf.0).unwrap();
+                        self.kiss_to_host(kiss);
                         self.state = State::RxStream(RxStreamState { lsf, index: 0 });
                     }
                 }
@@ -87,9 +89,8 @@ impl SoftTnc {
                             self.state = State::RxAcquiringStream(RxAcquiringStreamState { lich });
                         } else {
                             rx.index = stream.frame_number + 1;
-                            let kiss = KissFrame::new_stream_data(&stream.stream_data).unwrap();
+                            let kiss = KissFrame::new_stream_data(&stream).unwrap();
                             self.kiss_to_host(kiss);
-                            // TODO: handle LICH contents to track META content
                             // TODO: end stream if LICH updates indicate non-META part has changed
                             // (this implies a new station)
                             if stream.end_of_stream {
@@ -178,7 +179,7 @@ impl SoftTnc {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SoftTncError {
     General(&'static str),
     InvalidState,
@@ -227,4 +228,205 @@ struct RxPacketState {
     /// Number of payload frames we have received. If we are stably in the RxPacket state,
     /// this will be between 0 and 32 inclusive.
     count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kiss::{KissCommand, PORT_STREAM};
+    use crate::protocol::StreamFrame;
+
+    // TODO: finish all handle_frame tests as below
+    // this will be much more straightforward when we have a way to create LSFs programatically
+
+    // receiving a single-frame packet
+
+    // receiving a multi-frame packet
+
+    // part of one packet and then another
+
+    #[test]
+    fn tnc_receive_stream() {
+        let lsf = LsfFrame([
+            255, 255, 255, 255, 255, 255, 0, 0, 0, 159, 221, 81, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 131, 53,
+        ]);
+        let stream1 = StreamFrame {
+            lich_idx: 0,
+            lich_part: [255, 255, 255, 255, 255],
+            frame_number: 0,
+            end_of_stream: false,
+            stream_data: [
+                128, 0, 119, 115, 220, 252, 41, 235, 8, 0, 116, 195, 94, 244, 45, 75,
+            ],
+        };
+        let stream2 = StreamFrame {
+            lich_idx: 1,
+            lich_part: [255, 0, 0, 0, 159],
+            frame_number: 1,
+            end_of_stream: true,
+            stream_data: [
+                17, 0, 94, 82, 216, 135, 181, 15, 30, 0, 125, 195, 152, 183, 41, 57,
+            ],
+        };
+        let mut tnc = SoftTnc::new();
+        let mut kiss = KissFrame::new_empty();
+        assert_eq!(tnc.read_kiss(&mut kiss.data), Ok(0));
+
+        tnc.handle_frame(Frame::Lsf(lsf)).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_STREAM);
+
+        let mut payload_buf = [0u8; 2048];
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 30);
+
+        tnc.handle_frame(Frame::Stream(stream1)).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_STREAM);
+
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 26);
+
+        tnc.handle_frame(Frame::Stream(stream2)).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_STREAM);
+
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 26);
+    }
+
+    #[test]
+    fn tnc_acquire_stream() {
+        let frames = [
+            StreamFrame {
+                lich_idx: 0,
+                lich_part: [255, 255, 255, 255, 255],
+                frame_number: 0,
+                end_of_stream: false,
+                stream_data: [
+                    128, 0, 119, 115, 220, 252, 41, 235, 8, 0, 116, 195, 94, 244, 45, 75,
+                ],
+            },
+            StreamFrame {
+                lich_idx: 1,
+                lich_part: [255, 0, 0, 0, 159],
+                frame_number: 1,
+                end_of_stream: false,
+                stream_data: [
+                    17, 0, 94, 82, 216, 135, 181, 15, 30, 0, 125, 195, 152, 183, 41, 57,
+                ],
+            },
+            StreamFrame {
+                lich_idx: 2,
+                lich_part: [221, 81, 5, 5, 0],
+                frame_number: 2,
+                end_of_stream: false,
+                stream_data: [
+                    17, 128, 93, 74, 154, 167, 169, 11, 20, 0, 116, 91, 158, 220, 45, 111,
+                ],
+            },
+            StreamFrame {
+                lich_idx: 3,
+                lich_part: [0, 0, 0, 0, 0],
+                frame_number: 3,
+                end_of_stream: false,
+                stream_data: [
+                    15, 128, 114, 83, 218, 252, 59, 111, 31, 128, 116, 91, 84, 231, 45, 105,
+                ],
+            },
+            StreamFrame {
+                lich_idx: 4,
+                lich_part: [0, 0, 0, 0, 0],
+                frame_number: 4,
+                end_of_stream: false,
+                stream_data: [
+                    9, 128, 119, 115, 220, 220, 57, 15, 48, 128, 124, 83, 158, 236, 181, 91,
+                ],
+            },
+            StreamFrame {
+                lich_idx: 5,
+                lich_part: [0, 0, 0, 131, 53],
+                frame_number: 5,
+                end_of_stream: false,
+                stream_data: [
+                    52, 0, 116, 90, 152, 167, 225, 216, 32, 0, 116, 83, 156, 212, 33, 216,
+                ],
+            },
+        ];
+
+        let mut tnc = SoftTnc::new();
+        let mut kiss = KissFrame::new_empty();
+        for f in frames {
+            tnc.handle_frame(Frame::Stream(f)).unwrap();
+        }
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        let mut payload_buf = [0u8; 2048];
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 30);
+        assert_eq!(
+            &payload_buf[0..30],
+            [
+                255, 255, 255, 255, 255, 255, 0, 0, 0, 159, 221, 81, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 131, 53,
+            ]
+        );
+    }
+
+    #[test]
+    fn tnc_handle_skipped_stream_frame() {
+        let lsf = LsfFrame([
+            255, 255, 255, 255, 255, 255, 0, 0, 0, 159, 221, 81, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 131, 53,
+        ]);
+        let stream1 = StreamFrame {
+            lich_idx: 0,
+            lich_part: [255, 255, 255, 255, 255],
+            frame_number: 0,
+            end_of_stream: false,
+            stream_data: [
+                128, 0, 119, 115, 220, 252, 41, 235, 8, 0, 116, 195, 94, 244, 45, 75,
+            ],
+        };
+        let stream3 = StreamFrame {
+            lich_idx: 2,
+            lich_part: [221, 81, 5, 5, 0],
+            frame_number: 2,
+            end_of_stream: false,
+            stream_data: [
+                17, 128, 93, 74, 154, 167, 169, 11, 20, 0, 116, 91, 158, 220, 45, 111,
+            ],
+        };
+        let mut tnc = SoftTnc::new();
+        let mut kiss = KissFrame::new_empty();
+        assert_eq!(tnc.read_kiss(&mut kiss.data), Ok(0));
+
+        tnc.handle_frame(Frame::Lsf(lsf)).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_STREAM);
+
+        let mut payload_buf = [0u8; 2048];
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 30);
+
+        tnc.handle_frame(Frame::Stream(stream1)).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_STREAM);
+
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 26);
+
+        tnc.handle_frame(Frame::Stream(stream3)).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_STREAM);
+
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 26);
+    }
 }

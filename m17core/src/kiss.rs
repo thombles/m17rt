@@ -1,3 +1,5 @@
+use crate::protocol::StreamFrame;
+
 // Note FEND and FESC both have the top two bits set. In the header byte this corresponds
 // to high port numbers which are never used by M17 so we needn't bother (un)escaping it.
 
@@ -117,14 +119,7 @@ impl KissFrame {
     }
 
     /// Transmit a segment of data in a stream transfer (e.g. voice).
-    ///
-    /// A data payload of 26 bytes including metadata must be provided. This must follow
-    /// exactly the prescribed format (H.5.2 in the spec). The TNC will be watching for
-    /// the EOS flag to know that this transmission has ended.
-    pub fn new_stream_data(stream_data: &[u8]) -> Result<Self, KissError> {
-        if stream_data.len() != 26 {
-            return Err(KissError::StreamDataWrongSize);
-        }
+    pub fn new_stream_data(frame: &StreamFrame) -> Result<Self, KissError> {
         let mut data = [0u8; MAX_FRAME_LEN];
         let mut i = 0;
         push(&mut data, &mut i, FEND);
@@ -133,9 +128,25 @@ impl KissFrame {
             &mut i,
             kiss_header(PORT_STREAM, KissCommand::DataFrame.proto_value()),
         );
-        i += escape(stream_data, &mut data[i..]);
-        push(&mut data, &mut i, FEND);
 
+        // 5 bytes LICH content
+        i += escape(&frame.lich_part, &mut data[i..]);
+        // 1 byte LICH metadata
+        i += escape(&[frame.lich_idx << 5], &mut data[i..]);
+
+        // 2 bytes frame number/EOS + 16 bytes payload + 2 bytes CRC
+        let mut inner_data = [0u8; 20];
+        let frame_num = frame.frame_number.to_be_bytes();
+        inner_data[0] = frame_num[0] | if frame.end_of_stream { 0x80 } else { 0 };
+        inner_data[1] = frame_num[1];
+        inner_data[2..18].copy_from_slice(&frame.stream_data);
+        let crc = crate::crc::m17_crc(&inner_data[0..18]);
+        let crc_be = crc.to_be_bytes();
+        inner_data[18] = crc_be[0];
+        inner_data[19] = crc_be[1];
+        i += escape(&inner_data, &mut data[i..]);
+
+        push(&mut data, &mut i, FEND);
         Ok(KissFrame { data, len: i })
     }
 
@@ -388,7 +399,6 @@ pub enum KissError {
     UnsupportedKissCommand,
     PayloadTooBig,
     LsfWrongSize,
-    StreamDataWrongSize,
 }
 
 fn escape(src: &[u8], dst: &mut [u8]) -> usize {
