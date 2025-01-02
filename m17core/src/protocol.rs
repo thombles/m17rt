@@ -29,7 +29,7 @@ pub enum EncryptionType {
 pub enum Frame {
     Lsf(LsfFrame),
     Stream(StreamFrame),
-    // Packet
+    Packet(PacketFrame),
     // BERT
 }
 
@@ -156,6 +156,33 @@ pub struct StreamFrame {
     pub end_of_stream: bool,
     /// Raw application data in this frame
     pub stream_data: [u8; 16],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PacketFrame {
+    /// Application packet payload (chunk)
+    pub payload: [u8; 25],
+
+    /// Frame counter, which provides different information depending on whether this is the last frame or not.
+    pub counter: PacketFrameCounter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PacketFrameCounter {
+    /// Any packet frame that comes after the LSF and is not the final frame.
+    Frame {
+        /// Which frame this is in the superframe, from 0 to 31 inclusive.
+        ///
+        /// If a 33rd frame exists (index 32), it will be a `FinalFrame` instead.
+        ///
+        /// All 25 bytes of of `payload` are filled and valid.
+        index: usize,
+    },
+    /// The final frame in the packet superframe.
+    FinalFrame {
+        /// The number of bytes in `payload` that are filled.
+        payload_len: usize,
+    },
 }
 
 pub struct LichCollection([Option<[u8; 5]>; 6]);
