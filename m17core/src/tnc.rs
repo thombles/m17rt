@@ -26,7 +26,7 @@ impl SoftTnc {
     }
 
     /// Process an individual `Frame` that has been decoded by the modem.
-    pub fn handle_frame(&mut self, frame: Frame) -> Result<(), SoftTncError> {
+    pub fn handle_frame(&mut self, frame: Frame) {
         match frame {
             Frame::Lsf(lsf) => {
                 // A new LSF implies a clean slate.
@@ -126,7 +126,6 @@ impl SoftTnc {
                 }
             }
         }
-        Ok(())
     }
 
     /// Update the number of samples that have been received by the incoming stream, as a form of timekeeping
@@ -144,7 +143,7 @@ impl SoftTnc {
     ///
     /// After each frame input, this should be consumed in a loop until length 0 is returned.
     /// This component will never block. Upstream interface can provide blocking `read()` if desired.
-    pub fn read_kiss(&mut self, target_buf: &mut [u8]) -> Result<usize, SoftTncError> {
+    pub fn read_kiss(&mut self, target_buf: &mut [u8]) -> usize {
         match self.outgoing_kiss.as_mut() {
             Some(outgoing) => {
                 let n = (outgoing.kiss_frame.len - outgoing.sent).min(target_buf.len());
@@ -154,13 +153,13 @@ impl SoftTnc {
                 if outgoing.sent == outgoing.kiss_frame.len {
                     self.outgoing_kiss = None;
                 }
-                Ok(n)
+                n
             }
-            None => Ok(0),
+            None => 0,
         }
     }
 
-    pub fn write_kiss(&mut self, buf: &[u8]) -> Result<usize, SoftTncError> {
+    pub fn write_kiss(&mut self, buf: &[u8]) -> usize {
         let target_buf = self.kiss_buffer.buf_remaining();
         let n = buf.len().min(target_buf.len());
         target_buf[0..n].copy_from_slice(&buf[0..n]);
@@ -168,7 +167,7 @@ impl SoftTnc {
         while let Some(_kiss_frame) = self.kiss_buffer.next_frame() {
             // TODO: handle host-to-TNC message
         }
-        Ok(n)
+        n
     }
 
     fn kiss_to_host(&mut self, kiss_frame: KissFrame) {
@@ -271,10 +270,10 @@ mod tests {
         };
         let mut tnc = SoftTnc::new();
         let mut kiss = KissFrame::new_empty();
-        assert_eq!(tnc.read_kiss(&mut kiss.data), Ok(0));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
 
-        tnc.handle_frame(Frame::Lsf(lsf)).unwrap();
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        tnc.handle_frame(Frame::Lsf(lsf));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
         assert_eq!(kiss.port().unwrap(), PORT_STREAM);
 
@@ -282,16 +281,16 @@ mod tests {
         let n = kiss.decode_payload(&mut payload_buf).unwrap();
         assert_eq!(n, 30);
 
-        tnc.handle_frame(Frame::Stream(stream1)).unwrap();
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        tnc.handle_frame(Frame::Stream(stream1));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
         assert_eq!(kiss.port().unwrap(), PORT_STREAM);
 
         let n = kiss.decode_payload(&mut payload_buf).unwrap();
         assert_eq!(n, 26);
 
-        tnc.handle_frame(Frame::Stream(stream2)).unwrap();
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        tnc.handle_frame(Frame::Stream(stream2));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
         assert_eq!(kiss.port().unwrap(), PORT_STREAM);
 
@@ -361,9 +360,9 @@ mod tests {
         let mut tnc = SoftTnc::new();
         let mut kiss = KissFrame::new_empty();
         for f in frames {
-            tnc.handle_frame(Frame::Stream(f)).unwrap();
+            tnc.handle_frame(Frame::Stream(f));
         }
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         let mut payload_buf = [0u8; 2048];
         let n = kiss.decode_payload(&mut payload_buf).unwrap();
         assert_eq!(n, 30);
@@ -402,10 +401,10 @@ mod tests {
         };
         let mut tnc = SoftTnc::new();
         let mut kiss = KissFrame::new_empty();
-        assert_eq!(tnc.read_kiss(&mut kiss.data), Ok(0));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
 
-        tnc.handle_frame(Frame::Lsf(lsf)).unwrap();
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        tnc.handle_frame(Frame::Lsf(lsf));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
         assert_eq!(kiss.port().unwrap(), PORT_STREAM);
 
@@ -413,16 +412,16 @@ mod tests {
         let n = kiss.decode_payload(&mut payload_buf).unwrap();
         assert_eq!(n, 30);
 
-        tnc.handle_frame(Frame::Stream(stream1)).unwrap();
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        tnc.handle_frame(Frame::Stream(stream1));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
         assert_eq!(kiss.port().unwrap(), PORT_STREAM);
 
         let n = kiss.decode_payload(&mut payload_buf).unwrap();
         assert_eq!(n, 26);
 
-        tnc.handle_frame(Frame::Stream(stream3)).unwrap();
-        kiss.len = tnc.read_kiss(&mut kiss.data).unwrap();
+        tnc.handle_frame(Frame::Stream(stream3));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
         assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
         assert_eq!(kiss.port().unwrap(), PORT_STREAM);
 

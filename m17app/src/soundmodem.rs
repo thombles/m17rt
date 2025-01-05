@@ -2,6 +2,8 @@ use std::io::{self, ErrorKind, Read, Write};
 
 use crate::tnc::{Tnc, TncError};
 use log::debug;
+use m17core::kiss::MAX_FRAME_LEN;
+use m17core::modem::{Demodulator, SoftDemodulator};
 use m17core::tnc::SoftTnc;
 use std::fs::File;
 use std::path::PathBuf;
@@ -10,28 +12,68 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct Soundmodem {
-    tnc: SoftTnc,
-    config: SoundmodemConfig,
+    event_tx: SyncSender<SoundmodemEvent>,
+    kiss_out_rx: Arc<Mutex<Receiver<Arc<[u8]>>>>,
+    partial_kiss_out: Arc<Mutex<Option<PartialKissOut>>>,
 }
 
-pub struct SoundmodemConfig {
-    // sound cards, PTT, etc.
-    input: Box<dyn InputSource>,
+impl Soundmodem {
+    pub fn new_with_input<T: InputSource>(input: T) -> Self {
+        // must create TNC here
+        let (event_tx, event_rx) = sync_channel(128);
+        let (kiss_out_tx, kiss_out_rx) = sync_channel(128);
+        spawn_soundmodem_worker(event_tx.clone(), event_rx, kiss_out_tx, Box::new(input));
+        Self {
+            event_tx,
+            kiss_out_rx: Arc::new(Mutex::new(kiss_out_rx)),
+            partial_kiss_out: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+struct PartialKissOut {
+    output: Arc<[u8]>,
+    idx: usize,
 }
 
 impl Read for Soundmodem {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.tnc
-            .read_kiss(buf)
-            .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))
+        {
+            let mut partial_kiss_out = self.partial_kiss_out.lock().unwrap();
+            if let Some(partial) = partial_kiss_out.as_mut() {
+                let remaining = partial.output.len() - partial.idx;
+                let to_write = remaining.min(buf.len());
+                buf[0..to_write]
+                    .copy_from_slice(&partial.output[partial.idx..(partial.idx + to_write)]);
+                if to_write == remaining {
+                    *partial_kiss_out = None;
+                } else {
+                    partial.idx += to_write;
+                }
+                return Ok(to_write);
+            }
+        }
+        let output = {
+            let rx = self.kiss_out_rx.lock().unwrap();
+            rx.recv()
+                .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))?
+        };
+        let to_write = output.len().min(buf.len());
+        buf[0..to_write].copy_from_slice(&output[0..to_write]);
+        if to_write != output.len() {
+            *self.partial_kiss_out.lock().unwrap() = Some(PartialKissOut {
+                output,
+                idx: to_write,
+            })
+        }
+        Ok(to_write)
     }
 }
 
 impl Write for Soundmodem {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.tnc
-            .write_kiss(buf)
-            .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))
+        let _ = self.event_tx.try_send(SoundmodemEvent::Kiss(buf.into()));
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -41,21 +83,69 @@ impl Write for Soundmodem {
 
 impl Tnc for Soundmodem {
     fn try_clone(&mut self) -> Result<Self, TncError> {
-        unimplemented!();
+        Ok(Self {
+            event_tx: self.event_tx.clone(),
+            kiss_out_rx: self.kiss_out_rx.clone(),
+            partial_kiss_out: self.partial_kiss_out.clone(),
+        })
     }
 
     fn start(&mut self) -> Result<(), TncError> {
-        unimplemented!();
+        let _ = self.event_tx.send(SoundmodemEvent::Start);
+        Ok(())
     }
 
     fn close(&mut self) -> Result<(), TncError> {
-        unimplemented!();
+        let _ = self.event_tx.send(SoundmodemEvent::Close);
+        Ok(())
     }
 }
 
 pub enum SoundmodemEvent {
     Kiss(Arc<[u8]>),
     BasebandInput(Arc<[i16]>),
+    Start,
+    Close,
+}
+
+fn spawn_soundmodem_worker(
+    event_tx: SyncSender<SoundmodemEvent>,
+    event_rx: Receiver<SoundmodemEvent>,
+    kiss_out_tx: SyncSender<Arc<[u8]>>,
+    input: Box<dyn InputSource>,
+) {
+    std::thread::spawn(move || {
+        // TODO: should be able to provide a custom Demodulator for a soundmodem
+        let mut demod = SoftDemodulator::new();
+        let mut tnc = SoftTnc::new();
+        let mut buf = [0u8; MAX_FRAME_LEN];
+        while let Ok(ev) = event_rx.recv() {
+            match ev {
+                SoundmodemEvent::Kiss(k) => {
+                    let _n = tnc.write_kiss(&k);
+                    // TODO: what does it mean if we fail to write it all?
+                    // Probably we have to read frames for tx first - revisit this during tx
+                }
+                SoundmodemEvent::BasebandInput(b) => {
+                    for sample in &*b {
+                        if let Some(frame) = demod.demod(*sample) {
+                            tnc.handle_frame(frame);
+                            loop {
+                                let n = tnc.read_kiss(&mut buf);
+                                if n > 0 {
+                                    let _ = kiss_out_tx.try_send(buf[0..n].into());
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                SoundmodemEvent::Start => input.start(event_tx.clone()),
+                SoundmodemEvent::Close => break,
+            }
+        }
+    });
 }
 
 pub trait InputSource: Send + Sync + 'static {
@@ -80,6 +170,15 @@ impl InputSource for InputSoundcard {
 pub struct InputRrcFile {
     path: PathBuf,
     end_tx: Mutex<Option<Sender<()>>>,
+}
+
+impl InputRrcFile {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            end_tx: Mutex::new(None),
+        }
+    }
 }
 
 impl InputSource for InputRrcFile {
