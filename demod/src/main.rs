@@ -57,7 +57,12 @@ pub fn run_my_decode() {
                     let stream = def
                         .build_output_stream(
                             &config.into(),
-                            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                            move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
+                                debug!(
+                                    "callback {:?} playback {:?}",
+                                    info.timestamp().callback,
+                                    info.timestamp().playback
+                                );
                                 println!(
                                     "iteration {counter} asked for {} samples at time {}",
                                     data.len(),
@@ -72,7 +77,7 @@ pub fn run_my_decode() {
                                 data[0..qty].copy_from_slice(&samples[index..(index + qty)]);
                                 index += qty;
                             },
-                            move |e| {
+                            move |_e| {
                                 println!("error occurred");
                             },
                             None,

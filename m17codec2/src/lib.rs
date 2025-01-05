@@ -1,9 +1,12 @@
 use codec2::{Codec2, Codec2Mode};
-
+use cpal::traits::DeviceTrait;
+use cpal::traits::HostTrait;
+use cpal::traits::StreamTrait;
+use cpal::{Sample, SampleFormat, SampleRate};
+use log::debug;
 use m17app::adapter::StreamAdapter;
 use m17app::app::TxHandle;
 use m17core::protocol::LsfFrame;
-
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write;
@@ -12,13 +15,6 @@ use std::sync::{
     mpsc::{channel, Receiver, Sender},
     Arc, Mutex,
 };
-
-use cpal::traits::DeviceTrait;
-use cpal::traits::HostTrait;
-use cpal::traits::StreamTrait;
-use cpal::{Sample, SampleFormat, SampleRate};
-
-use log::debug;
 
 pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
     let codec2 = Codec2::new(Codec2Mode::MODE_3200);
@@ -142,7 +138,12 @@ fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card
     let stream = device
         .build_output_stream(
             &config.into(),
-            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+            move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
+                debug!(
+                    "callback {:?} playback {:?}",
+                    info.timestamp().callback,
+                    info.timestamp().playback
+                );
                 output_cb(data, &state);
             },
             |e| {
