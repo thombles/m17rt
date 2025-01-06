@@ -1,8 +1,11 @@
 use crate::{
     bits::BitsMut,
-    fec::{self, p_1, p_2},
+    fec::{self, p_1, p_2, p_3},
     interleave::interleave,
-    protocol::{LsfFrame, StreamFrame, BERT_SYNC, LSF_SYNC, PACKET_SYNC, STREAM_SYNC},
+    protocol::{
+        LsfFrame, PacketFrame, PacketFrameCounter, StreamFrame, BERT_SYNC, LSF_SYNC, PACKET_SYNC,
+        STREAM_SYNC,
+    },
     random::random_xor,
 };
 use log::debug;
@@ -140,4 +143,27 @@ pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame
     } else {
         None
     }
+}
+
+pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame> {
+    let deinterleaved = frame_initial_decode(frame);
+    let packet = match fec::decode(&deinterleaved, 206, p_3) {
+        Some(packet) => packet,
+        None => return None,
+    };
+    let final_frame = (packet[25] & 0x80) > 0;
+    let number = (packet[25] >> 2) & 0x01f;
+    let counter = if final_frame {
+        PacketFrameCounter::FinalFrame {
+            payload_len: number as usize,
+        }
+    } else {
+        PacketFrameCounter::Frame {
+            index: number as usize,
+        }
+    };
+    Some(PacketFrame {
+        payload: packet[0..25].try_into().unwrap(),
+        counter,
+    })
 }

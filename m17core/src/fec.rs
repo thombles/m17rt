@@ -181,6 +181,11 @@ pub(crate) fn p_2(step: usize) -> (bool, bool) {
     (true, mod6 != 5)
 }
 
+pub(crate) fn p_3(step: usize) -> (bool, bool) {
+    let mod4 = step % 4;
+    (true, mod4 != 3)
+}
+
 fn best_previous(table: &[[u8; 32]; 244], step: usize, state: usize) -> u8 {
     if step == 0 {
         if state == 0 {

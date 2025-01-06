@@ -23,4 +23,6 @@ pub trait StreamAdapter: Send + Sync + 'static {
     // fn stream_assembled_text_block()
     // fn stream_gnss_data()
     // fn stream_extended_callsign_data()
+
+    // fn stream_tx_ended_early(&self); // underrun/overrun
 }

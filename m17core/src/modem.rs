@@ -1,4 +1,6 @@
-use crate::decode::{parse_lsf, parse_stream, sync_burst_correlation, SyncBurst, SYNC_THRESHOLD};
+use crate::decode::{
+    parse_lsf, parse_packet, parse_stream, sync_burst_correlation, SyncBurst, SYNC_THRESHOLD,
+};
 use crate::protocol::Frame;
 use crate::shaping::RRC_48K;
 use log::debug;
@@ -131,7 +133,11 @@ impl Demodulator for SoftDemodulator {
                             }
                         }
                         SyncBurst::Packet => {
-                            debug!("Found PACKET at sample {} diff {}", start_sample, c.diff)
+                            debug!("Found PACKET at sample {} diff {}", start_sample, c.diff);
+                            if let Some(frame) = parse_packet(&pkt_samples) {
+                                self.suppress = 191 * 10;
+                                return Some(Frame::Packet(frame));
+                            }
                         }
                     }
                 }

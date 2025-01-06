@@ -6,8 +6,20 @@ use std::io::{Read, Write};
 /// via a working implementation of try_clone(). We do not require `Clone` directly
 /// as this could not be fulfilled by `TcpStream`.
 pub trait Tnc: Read + Write + Sized + Send + 'static {
+    /// Return a copy of this TNC.
+    ///
+    /// `M17App` will use this to create a second instance of the supplied TNC then use
+    /// one of them for reading and one of them for writing, concurrently across two threads.
+    ///
+    /// Implementations do not need to worry about trying to make two simultaneous reads or
+    /// two simultaneous writes do something sensible. `M17App` will not do this and it would
+    /// probably produce garbled KISS messages anyway.
     fn try_clone(&mut self) -> Result<Self, TncError>;
+
+    /// Start I/O.
     fn start(&mut self) -> Result<(), TncError>;
+
+    /// Shut down I/O - it is assumed we cannot restart.
     fn close(&mut self) -> Result<(), TncError>;
 }
 
