@@ -10,5 +10,6 @@ repository = "https://code.octet-stream.net/m17rt"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+cpal = "0.15.3"
 m17core = { path = "../m17core" }
 log = "0.4.22"

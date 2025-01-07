@@ -1,11 +1,12 @@
 use m17app::app::M17App;
-use m17app::soundmodem::{InputRrcFile, Soundmodem};
+use m17app::soundmodem::{InputRrcFile, InputSoundcard, Soundmodem};
 use m17codec2::Codec2Adapter;
 use std::path::PathBuf;
 
 pub fn m17app_test() {
-    let path = PathBuf::from("../../Data/test_vk7xt.rrc");
-    let source = InputRrcFile::new(path);
+    //let path = PathBuf::from("../../Data/test_vk7xt.rrc");
+    //let source = InputRrcFile::new(path);
+    let source = InputSoundcard::new();
     let soundmodem = Soundmodem::new_with_input(source);
     let app = M17App::new(soundmodem);
     app.add_stream_adapter(Codec2Adapter::new());

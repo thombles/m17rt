@@ -1,6 +1,10 @@
 use std::io::{self, ErrorKind, Read, Write};
 
 use crate::tnc::{Tnc, TncError};
+use cpal::traits::DeviceTrait;
+use cpal::traits::HostTrait;
+use cpal::traits::StreamTrait;
+use cpal::{SampleFormat, SampleRate};
 use log::debug;
 use m17core::kiss::MAX_FRAME_LEN;
 use m17core::modem::{Demodulator, SoftDemodulator};
@@ -154,16 +158,68 @@ pub trait InputSource: Send + Sync + 'static {
 }
 
 pub struct InputSoundcard {
-    cpal_name: String,
+    cpal_name: Option<String>,
+    end_tx: Mutex<Option<Sender<()>>>,
+}
+
+impl InputSoundcard {
+    pub fn new() -> Self {
+        Self {
+            cpal_name: None,
+            end_tx: Mutex::new(None),
+        }
+    }
+
+    pub fn new_with_card(card_name: String) -> Self {
+        Self {
+            cpal_name: Some(card_name),
+            end_tx: Mutex::new(None),
+        }
+    }
 }
 
 impl InputSource for InputSoundcard {
     fn start(&self, samples: SyncSender<SoundmodemEvent>) {
-        todo!()
+        let (end_tx, end_rx) = channel();
+        let cpal_name = self.cpal_name.clone();
+        std::thread::spawn(move || {
+            let host = cpal::default_host();
+            let device = if let Some(name) = cpal_name.as_deref() {
+                host.input_devices()
+                    .unwrap()
+                    .find(|d| d.name().unwrap() == name)
+                    .unwrap()
+            } else {
+                host.default_input_device().unwrap()
+            };
+            let mut configs = device.supported_input_configs().unwrap();
+            let config = configs
+                .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
+                .unwrap()
+                .with_sample_rate(SampleRate(48000));
+            let stream = device
+                .build_input_stream(
+                    &config.into(),
+                    move |data: &[i16], _info: &cpal::InputCallbackInfo| {
+                        debug!("input has given us {} samples", data.len());
+                        let out: Vec<i16> = data.iter().map(|s| *s).collect();
+                        let _ = samples.try_send(SoundmodemEvent::BasebandInput(out.into()));
+                    },
+                    |e| {
+                        // TODO: abort?
+                        debug!("error occurred in soundcard input: {e:?}");
+                    },
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            let _ = end_rx.recv();
+        });
+        *self.end_tx.lock().unwrap() = Some(end_tx);
     }
 
     fn close(&self) {
-        todo!()
+        let _ = self.end_tx.lock().unwrap().take();
     }
 }
 

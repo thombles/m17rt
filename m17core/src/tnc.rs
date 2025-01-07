@@ -65,6 +65,7 @@ impl SoftTnc {
                                 let end = start + payload_len;
                                 rx.packet[start..(start + payload_len)]
                                     .copy_from_slice(&packet.payload);
+                                // TODO: compatible packets should be sent on port 0 too
                                 let kiss =
                                     KissFrame::new_full_packet(&rx.lsf.0, &rx.packet[0..end])
                                         .unwrap();

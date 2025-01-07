@@ -50,6 +50,7 @@ impl Codec2Adapter {
                 codec2: Codec2::new(Codec2Mode::MODE_3200),
                 end_tx: None,
             })),
+            // TODO: this doesn't work on rpi. Use default_output_device() by default
             output_card: "default".to_owned(),
         }
     }
@@ -131,6 +132,8 @@ fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card
         .find(|d| d.name().unwrap() == output_card)
         .unwrap();
     let mut configs = device.supported_output_configs().unwrap();
+    // TODO: channels == 1 doesn't work on a Raspberry Pi
+    // make this configurable and support interleaving LRLR stereo samples if using 2 channels
     let config = configs
         .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
         .unwrap()
