@@ -88,6 +88,7 @@ pub(crate) fn frame_initial_decode(frame: &[f32] /* length 192 */) -> [u8; 46] {
 
 pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<LsfFrame> {
     let deinterleaved = frame_initial_decode(frame);
+    debug!("deinterleaved: {:?}", deinterleaved);
     let lsf = match fec::decode(&deinterleaved, 240, p_1) {
         Some(lsf) => LsfFrame(lsf),
         None => return None,

@@ -269,3 +269,91 @@ pub(crate) fn decode(
         Some(out)
     }
 }
+
+/// Perform convolutional encoding on payload.
+///
+/// Four flush bits will be appended automatically.
+///
+/// Parameters:
+/// * `type1`: Type 1 bits, maximum length 30 bytes
+/// * `input_len`: Number of type 1 bits, up to 240
+/// * `puncture`: Puncturing scheme - `p_1`, `p_2` or `p_3`
+///
+/// Returns up to 368 type 3 bits. Caller is responsible for knowing the number of
+/// filled bits in the returned array, which is known statically by the type of
+/// payload and puncturing scheme in use.
+pub(crate) fn encode(
+    type1: &[u8],
+    input_len: usize,
+    puncture: fn(usize) -> (bool, bool),
+) -> [u8; 46] {
+    let mut out = [0u8; 46];
+    let bits = Bits::new(type1);
+    let mut out_idx = 0;
+    let mut out_bits = BitsMut::new(&mut out);
+    let mut state: u8 = 0;
+    for (t1_idx, b) in bits
+        .iter()
+        .take(input_len)
+        .chain(core::iter::repeat_n(0, 4))
+        .enumerate()
+    {
+        let (use_g1, use_g2) = puncture(t1_idx);
+        if use_g1 {
+            let g1 = (b + ((state & 0x02) >> 1) + (state & 0x01)) & 0x01;
+            out_bits.set_bit(out_idx, g1);
+            out_idx += 1;
+        }
+        if use_g2 {
+            let g2 = (b + ((state & 0x08) >> 3) + ((state & 0x04) >> 2) + (state & 0x01)) & 0x01;
+            out_bits.set_bit(out_idx, g2);
+            out_idx += 1;
+        }
+        state = (state >> 1) | (b << 3);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lsf_fec_round_trip() {
+        let lsf = [
+            255, 255, 255, 255, 255, 255, 0, 0, 0, 159, 221, 81, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 131, 53,
+        ];
+        let expected_encoded = [
+            222, 73, 36, 146, 73, 37, 182, 219, 109, 76, 0, 0, 0, 5, 191, 47, 25, 186, 30, 214,
+            237, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42, 153, 208,
+            119,
+        ];
+        let encoded = encode(&lsf, 240, p_1);
+        assert_eq!(encoded, expected_encoded);
+        let decoded = decode(&encoded, 240, p_1);
+        assert_eq!(decoded, Some(lsf));
+    }
+
+    #[test]
+    fn fec_damage() {
+        let lsf = [
+            255, 255, 255, 255, 255, 255, 0, 0, 0, 159, 221, 81, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 131, 53,
+        ];
+        let mut encoded = encode(&lsf, 240, p_1);
+
+        // progressively flip more bits
+        for idx in [50, 90, 51, 200, 15, 7, 100] {
+            let mut bits = BitsMut::new(&mut encoded);
+            let bit = bits.get_bit(idx);
+            bits.set_bit(idx, if bit == 1 { 0 } else { 1 });
+            let decoded = decode(&encoded, 240, p_1);
+            if idx == 100 {
+                assert_eq!(decoded, None); // 7 bits is too much damage
+            } else {
+                assert_eq!(decoded, Some(lsf)); // recovered from errors
+            }
+        }
+    }
+}

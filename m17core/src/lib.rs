@@ -10,6 +10,7 @@ pub mod tnc;
 
 mod bits;
 mod decode;
+mod encode;
 mod fec;
 mod interleave;
 mod random;
