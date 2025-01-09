@@ -106,20 +106,6 @@ pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<LsfFrame> {
     Some(lsf)
 }
 
-pub(crate) fn try_lich_decode(type2_bits: &[u8]) -> Option<(u8, [u8; 5])> {
-    let mut decoded = 0u64;
-    for (input_idx, input_bytes) in type2_bits.chunks(3).enumerate() {
-        let mut input: u32 = 0;
-        for (idx, byte) in input_bytes.iter().enumerate() {
-            input |= (*byte as u32) << (16 - (8 * idx));
-        }
-        let (val, _dist) = cai_golay::extended::decode(input)?;
-        decoded |= (val as u64) << ((3 - input_idx) * 12);
-    }
-    let b = decoded.to_be_bytes();
-    Some((b[7] >> 5, [b[2], b[3], b[4], b[5], b[6]]))
-}
-
 pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame> {
     let deinterleaved = frame_initial_decode(frame);
     let stream_part = &deinterleaved[12..];
@@ -132,8 +118,11 @@ pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame
     let frame_num = frame_num & 0x7fff; // higher layer has to handle wraparound
     debug!("frame number: {frame_num}, codec2: {:?}", &stream[2..18]);
 
-    if let Some((counter, part)) = try_lich_decode(&deinterleaved[0..12]) {
-        debug!("LICH: received part {counter}");
+    if let Some((counter, part)) = decode_lich(&deinterleaved[0..12]) {
+        debug!(
+            "LICH: received part {counter} part {part:?} from raw {:?}",
+            &deinterleaved[0..12]
+        );
         Some(StreamFrame {
             lich_idx: counter,
             lich_part: part,
@@ -167,4 +156,31 @@ pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame
         payload: packet[0..25].try_into().unwrap(),
         counter,
     })
+}
+
+pub(crate) fn decode_lich(type2_bits: &[u8]) -> Option<(u8, [u8; 5])> {
+    let mut decoded = 0u64;
+    for (input_idx, input_bytes) in type2_bits.chunks(3).enumerate() {
+        let mut input: u32 = 0;
+        for (idx, byte) in input_bytes.iter().enumerate() {
+            input |= (*byte as u32) << (16 - (8 * idx));
+        }
+        let (val, _dist) = cai_golay::extended::decode(input)?;
+        decoded |= (val as u64) << ((3 - input_idx) * 12);
+    }
+    let b = decoded.to_be_bytes();
+    Some((b[7] >> 5, [b[2], b[3], b[4], b[5], b[6]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lich_decode() {
+        let input = [221, 82, 162, 16, 85, 200, 5, 14, 254, 4, 13, 153];
+        let expected_counter = 2;
+        let expected_part = [221, 81, 5, 5, 0];
+        assert_eq!(decode_lich(&input), Some((expected_counter, expected_part)));
+    }
 }
