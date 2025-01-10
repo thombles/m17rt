@@ -42,6 +42,29 @@ pub(crate) fn encode_packet(frame: &PacketFrame) -> [f32; 192] {
     interleave_to_dibits(type3, PACKET_SYNC)
 }
 
+/// Generate a preamble suitable for placement before an LSF frame.
+///
+/// Polarity needs to be flipped for BERT, however we don't support this yet.
+/// STREAM and PACKET don't need to be considered as they are an invalid way to
+/// begin a transmission.
+pub(crate) fn generate_preamble() -> [f32; 192] {
+    // TODO: should all these encode/generate functions return owning iterators?
+    // Then I could avoid making this array which I'm just going to have to copy anyway
+    let mut out = [1.0f32; 192];
+    for n in out.iter_mut().skip(1).step_by(2) {
+        *n = -1.0;
+    }
+    out
+}
+
+pub(crate) fn generate_end_of_transmission() -> [f32; 192] {
+    let mut out = [1.0f32; 192];
+    for n in out.iter_mut().skip(6).step_by(8) {
+        *n = -1.0;
+    }
+    out
+}
+
 pub(crate) fn encode_lich(counter: u8, part: &[u8; 5]) -> [u8; 12] {
     let mut out = [0u8; 12];
     let to_encode = [
