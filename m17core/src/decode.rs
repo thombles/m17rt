@@ -141,8 +141,8 @@ pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame
         Some(packet) => packet,
         None => return None,
     };
-    let final_frame = (packet[25] & 0x80) > 0;
-    let number = (packet[25] >> 2) & 0x01f;
+    let final_frame = (packet[25] & 0x04) > 0;
+    let number = packet[25] >> 3;
     let counter = if final_frame {
         PacketFrameCounter::FinalFrame {
             payload_len: number as usize,

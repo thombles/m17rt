@@ -1,78 +1,48 @@
 use crate::{
     bits::Bits,
-    fec::{self, p_1},
+    fec::{self, p_1, p_2, p_3},
     interleave::interleave,
-    protocol::{LsfFrame, PacketFrame, StreamFrame, LSF_SYNC},
+    protocol::{
+        LsfFrame, PacketFrame, PacketFrameCounter, StreamFrame, LSF_SYNC, PACKET_SYNC, STREAM_SYNC,
+    },
     random::random_xor,
 };
 
 pub(crate) fn encode_lsf(frame: &LsfFrame) -> [f32; 192] {
     let type3 = fec::encode(&frame.0, 240, p_1);
-    let mut interleaved = interleave(&type3);
-    random_xor(&mut interleaved);
-    let mut out = [0f32; 192];
-    for (val, o) in LSF_SYNC.iter().zip(out.iter_mut()) {
-        *o = *val as f32;
-    }
-    let bits = Bits::new(&interleaved);
-    let mut out_bits = bits.iter();
-    for o in out[8..].iter_mut() {
-        *o = match (out_bits.next().unwrap(), out_bits.next().unwrap()) {
-            (0, 1) => 1.0,
-            (0, 0) => 1.0 / 3.0,
-            (1, 0) => -1.0 / 3.0,
-            (1, 1) => -1.0,
-            _ => unreachable!(),
-        };
-    }
-    out
+    interleave_to_dibits(type3, LSF_SYNC)
 }
 
-/*pub(crate) fn encode_stream(frame: &StreamFrame) -> [f32; 192] {
-    let type3 = fec::encode(&frame.0, 240, p_1);
-    let mut interleaved = interleave(&type3);
-    random_xor(&mut interleaved);
-    let mut out = [0f32; 192];
-    for (val, o) in LSF_SYNC.iter().zip(out.iter_mut()) {
-        *o = *val as f32;
-    }
-    let bits = Bits::new(&interleaved);
-    let mut out_bits = bits.iter();
-    for o in out[8..].iter_mut() {
-        *o = match (out_bits.next().unwrap(), out_bits.next().unwrap()) {
-            (0, 1) => 1.0,
-            (0, 0) => 1.0 / 3.0,
-            (1, 0) => -1.0 / 3.0,
-            (1, 1) => -1.0,
-            _ => unreachable!(),
-        };
-    }
-    out
-}*/
+pub(crate) fn encode_stream(frame: &StreamFrame) -> [f32; 192] {
+    let lich = encode_lich(frame.lich_idx, &frame.lich_part);
+    let mut type1 = [0u8; 18];
+    let frame_number = frame.frame_number | if frame.end_of_stream { 0x8000 } else { 0x0000 };
+    type1[0..2].copy_from_slice(&frame_number.to_be_bytes());
+    type1[2..18].copy_from_slice(&frame.stream_data);
+    let type3 = fec::encode(&type1, 144, p_2);
+    let mut combined = [0u8; 46];
+    combined[0..12].copy_from_slice(&lich);
+    combined[12..46].copy_from_slice(&type3[0..34]);
+    interleave_to_dibits(combined, STREAM_SYNC)
+}
 
-/*pub(crate) fn encode_packet(frame: &PacketFrame) -> [f32; 192] {
-    let type3 = fec::encode(&frame.0, 240, p_1);
-    let mut interleaved = interleave(&type3);
-    random_xor(&mut interleaved);
-    let mut out = [0f32; 192];
-    for (val, o) in LSF_SYNC.iter().zip(out.iter_mut()) {
-        *o = *val as f32;
+pub(crate) fn encode_packet(frame: &PacketFrame) -> [f32; 192] {
+    let mut type1 = [0u8; 26]; // only 206 out of 208 bits filled
+    match frame.counter {
+        PacketFrameCounter::Frame { index } => {
+            type1[0..25].copy_from_slice(&frame.payload);
+            type1[25] = (index as u8) << 3;
+        }
+        PacketFrameCounter::FinalFrame { payload_len } => {
+            type1[0..payload_len].copy_from_slice(&frame.payload[0..payload_len]);
+            type1[25] = (payload_len as u8) << 3 | 0x04;
+        }
     }
-    let bits = Bits::new(&interleaved);
-    let mut out_bits = bits.iter();
-    for o in out[8..].iter_mut() {
-        *o = match (out_bits.next().unwrap(), out_bits.next().unwrap()) {
-            (0, 1) => 1.0,
-            (0, 0) => 1.0 / 3.0,
-            (1, 0) => -1.0 / 3.0,
-            (1, 1) => -1.0,
-            _ => unreachable!(),
-        };
-    }
-    out
-}*/
+    let type3 = fec::encode(&type1, 206, p_3);
+    interleave_to_dibits(type3, PACKET_SYNC)
+}
 
-pub(crate) fn encode_lich(counter: u8, part: [u8; 5]) -> [u8; 12] {
+pub(crate) fn encode_lich(counter: u8, part: &[u8; 5]) -> [u8; 12] {
     let mut out = [0u8; 12];
     let to_encode = [
         ((part[0] as u16) << 4) | ((part[1] as u16) >> 4),
@@ -83,6 +53,27 @@ pub(crate) fn encode_lich(counter: u8, part: [u8; 5]) -> [u8; 12] {
     for (i, o) in to_encode.into_iter().zip(out.chunks_mut(3)) {
         let encoded = cai_golay::extended::encode(i).to_be_bytes();
         o[0..3].copy_from_slice(&encoded[1..4]);
+    }
+    out
+}
+
+fn interleave_to_dibits(combined: [u8; 46], sync_burst: [i8; 8]) -> [f32; 192] {
+    let mut interleaved = interleave(&combined);
+    random_xor(&mut interleaved);
+    let mut out = [0f32; 192];
+    for (val, o) in sync_burst.iter().zip(out.iter_mut()) {
+        *o = *val as f32;
+    }
+    let bits = Bits::new(&interleaved);
+    let mut out_bits = bits.iter();
+    for o in out[8..].iter_mut() {
+        *o = match (out_bits.next().unwrap(), out_bits.next().unwrap()) {
+            (0, 1) => 1.0,
+            (0, 0) => 1.0 / 3.0,
+            (1, 0) => -1.0 / 3.0,
+            (1, 1) => -1.0,
+            _ => unreachable!(),
+        };
     }
     out
 }
@@ -103,11 +94,44 @@ mod tests {
     }
 
     #[test]
+    fn stream_round_trip() {
+        let stream = StreamFrame {
+            lich_idx: 5,
+            lich_part: [1, 2, 3, 4, 5],
+            frame_number: 50,
+            end_of_stream: false,
+            stream_data: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        };
+        let encoded = encode_stream(&stream);
+        let decoded = crate::decode::parse_stream(&encoded);
+        assert_eq!(decoded, Some(stream));
+    }
+
+    #[test]
+    fn packet_round_trip() {
+        let packet = PacketFrame {
+            payload: [41u8; 25],
+            counter: PacketFrameCounter::Frame { index: 3 },
+        };
+        let encoded = encode_packet(&packet);
+        let decoded = crate::decode::parse_packet(&encoded);
+        assert_eq!(decoded, Some(packet));
+
+        let packet = PacketFrame {
+            payload: [0u8; 25],
+            counter: PacketFrameCounter::FinalFrame { payload_len: 10 },
+        };
+        let encoded = encode_packet(&packet);
+        let decoded = crate::decode::parse_packet(&encoded);
+        assert_eq!(decoded, Some(packet));
+    }
+
+    #[test]
     fn lich_encode() {
         let input = [221, 81, 5, 5, 0];
         let counter = 2;
         let expected_output = [221, 82, 162, 16, 85, 200, 5, 14, 254, 4, 13, 153];
-        assert_eq!(encode_lich(counter, input), expected_output);
+        assert_eq!(encode_lich(counter, &input), expected_output);
     }
 
     #[test]
@@ -115,7 +139,7 @@ mod tests {
         let input = [1, 255, 0, 90, 10];
         let counter = 0;
         assert_eq!(
-            crate::decode::decode_lich(&encode_lich(counter, input.clone())),
+            crate::decode::decode_lich(&encode_lich(counter, &input)),
             Some((counter, input))
         );
     }
