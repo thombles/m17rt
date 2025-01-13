@@ -1,6 +1,9 @@
 use crate::decode::{
     parse_lsf, parse_packet, parse_stream, sync_burst_correlation, SyncBurst, SYNC_THRESHOLD,
 };
+use crate::encode::{
+    encode_lsf, encode_packet, encode_stream, generate_end_of_transmission, generate_preamble,
+};
 use crate::protocol::{Frame, LsfFrame, PacketFrame, StreamFrame};
 use crate::shaping::RRC_48K;
 use log::debug;
@@ -169,21 +172,15 @@ pub trait Modulator {
     /// Furthermore we attempt to track and account for the latency between the output
     /// soundcard callback, and when those samples will actually be on the wire. CPAL helpfully
     /// gives us an estimate. The latest estimate of latency is converted to a duration in terms
-    /// of number of samples and provided as `output_latency`.
+    /// of number of samples and provided as `output_latency`. Added to this is the current
+    /// number of samples we expect remain to be processed from the last read.
     ///
-    /// Finally, we give the modem a monotonic timer expressed in the number of samples of time
-    /// that have elapsed since the modem began operation. When the modulator advises the TNC
-    /// exactly when a transmission is expected to complete, it should be expressed in terms of
-    /// this number.
-    ///
-    /// Call this whenever bytes have been read out of the buffer, or the TNC may have something
-    /// new to send.
+    /// Call this whenever bytes have been read out of the buffer.
     fn update_output_buffer(
         &mut self,
         samples_to_play: usize,
         capacity: usize,
         output_latency: usize,
-        now_samples: u64,
     );
 
     /// Supply the next frame available from the TNC, if it was requested.
@@ -215,8 +212,9 @@ pub enum ModulatorAction {
     /// Modulator wishes to send samples to the output buffer - call `read_output_samples`.
     ReadOutput,
 
-    /// Advise the TNC that we will complete sending End Of Transmission at the given time and
-    TransmissionWillEnd(u64),
+    /// Advise the TNC that we will complete sending End Of Transmission after the given number of
+    /// samples has elapsed, and therefore PTT should be deasserted at this time.
+    TransmissionWillEnd(usize),
 }
 
 /// Frames for transmission, emitted by the TNC and received by the Modulator.
@@ -245,8 +243,8 @@ pub enum ModulatorFrame {
     EndOfTransmission,
 }
 
-struct SoftModulator {
-    /// Next modulated frame to output - 1920 samples for 40ms frame plus 80 for ramp-up/ramp-down
+pub struct SoftModulator {
+    /// Next modulated frame to output - 1920 samples for 40ms frame plus 80 for ramp-down
     next_transmission: [i16; 2000],
     /// How much of next_transmission should in fact be transmitted
     next_len: usize,
@@ -260,23 +258,75 @@ struct SoftModulator {
     /// What is that idle status?
     idle: bool,
 
-    /// Do we need to report that a transmission end time? (True after we encoded an EOT)
-    report_tx_end: bool,
-    /// What will that end time be?
-    tx_end_time: u64,
+    /// Do we need to calculate a transmission end time?
+    ///
+    /// (True after we encoded an EOT.) We will wait until we get a precise timing update.
+    calculate_tx_end: bool,
+    /// Do we need to report a transmission end time?
+    ///
+    /// This is a duration expressed in number of samples.
+    report_tx_end: Option<usize>,
 
-    /// Circular buffer of incoming samples for calculating the RRC filtered value
-    filter_win: [i16; 81],
+    /// Circular buffer of most recently output samples for calculating the RRC filtered value.
+    ///
+    /// This should naturally degrade to an oldest value plus 80 zeroes after an EOT.
+    filter_win: [f32; 81],
     /// Current position in filter_win
     filter_cursor: usize,
 
     /// Should we ask the TNC for another frame. True after each call to update_output_buffer.
     try_get_frame: bool,
 
-    now: u64,
+    /// Expected delay beyond the buffer to reach the DAC
     output_latency: usize,
+    /// Number of samples we have placed in the buffer for the output soundcard not yet picked up.
     samples_in_buf: usize,
+    /// Total size to which the output buffer is allowed to expand.
     buf_capacity: usize,
+}
+
+impl SoftModulator {
+    pub fn new() -> Self {
+        Self {
+            next_transmission: [0i16; 2000],
+            next_len: 0,
+            next_read: 0,
+            tx_delay_padding: 0,
+            update_idle: true,
+            idle: true,
+            calculate_tx_end: false,
+            report_tx_end: None,
+            filter_win: [0f32; 81],
+            filter_cursor: 0,
+            try_get_frame: false,
+            output_latency: 0,
+            samples_in_buf: 0,
+            buf_capacity: 0,
+        }
+    }
+
+    fn push_sample(&mut self, dibit: f32) {
+        // Right now we are encoding everything as 1.0-scaled dibit floats
+        // This is a bit silly but it will do for a minute
+        // Max theoretical gain from the RRC filter is 4.328
+        // Let's bump everything to a baseline of 16383 / 4.328 = 3785.35
+        // This is not particularly high but at least we won't ever hit the top
+        self.filter_win[self.filter_cursor] = dibit * 3785.0;
+        self.filter_cursor = (self.filter_cursor + 1) % 81;
+        let mut out: f32 = 0.0;
+        for i in 0..81 {
+            let filter_idx = (self.filter_cursor + i) % 81;
+            out += RRC_48K[i] * self.filter_win[filter_idx];
+        }
+        self.next_transmission[self.next_len] = out as i16;
+        self.next_len += 1;
+    }
+
+    fn request_frame_if_space(&mut self) {
+        if self.buf_capacity - self.samples_in_buf >= 2000 {
+            self.try_get_frame = true;
+        }
+    }
 }
 
 impl Modulator for SoftModulator {
@@ -285,30 +335,74 @@ impl Modulator for SoftModulator {
         samples_to_play: usize,
         capacity: usize,
         output_latency: usize,
-        now_samples: u64,
     ) {
-        self.now = now_samples;
         self.output_latency = output_latency;
         self.buf_capacity = capacity;
         self.samples_in_buf = samples_to_play;
 
-        if capacity - samples_to_play >= 2000 {
-            self.try_get_frame = true;
+        if self.calculate_tx_end {
+            self.calculate_tx_end = false;
+            // next_transmission should already have been read out to the buffer by now
+            // so we don't have to consider it
+            self.report_tx_end = Some(self.samples_in_buf + self.output_latency);
         }
+
+        self.request_frame_if_space();
     }
 
     fn next_frame(&mut self, frame: Option<ModulatorFrame>) {
+        let Some(frame) = frame else {
+            self.try_get_frame = false;
+            return;
+        };
+
+        self.next_len = 0;
+        self.next_read = 0;
+
         match frame {
-            Some(_f) => {}
-            None => {
-                self.try_get_frame = false;
+            ModulatorFrame::Preamble { tx_delay } => {
+                // TODO: Stop assuming 48 kHz everywhere. 24 kHz should be fine too.
+                let tx_delay_samples = tx_delay as usize * 480;
+                // TxDelay and output latency have the same effect - account for whichever is bigger.
+                // We want our sound card DAC hitting preamble right when PTT fully engages.
+                // The modulator calls the shots here - TNC hands over Preamble and asserts PTT, then
+                // waits to be told when transmission will be complete. This estimate will not be
+                // made and delivered until we generate the EOT frame.
+                self.tx_delay_padding = tx_delay_samples.max(self.output_latency);
+
+                // We should be starting from a filter_win of zeroes
+                // Transmission is effectively smeared by 80 taps and we'll capture that in EOT
+                for dibit in generate_preamble() {
+                    self.push_sample(dibit);
+                }
+            }
+            ModulatorFrame::Lsf(lsf_frame) => {
+                for dibit in encode_lsf(&lsf_frame) {
+                    self.push_sample(dibit);
+                }
+            }
+            ModulatorFrame::Stream(stream_frame) => {
+                for dibit in encode_stream(&stream_frame) {
+                    self.push_sample(dibit);
+                }
+            }
+            ModulatorFrame::Packet(packet_frame) => {
+                for dibit in encode_packet(&packet_frame) {
+                    self.push_sample(dibit);
+                }
+            }
+            ModulatorFrame::EndOfTransmission => {
+                for dibit in generate_end_of_transmission() {
+                    self.push_sample(dibit);
+                }
+                for _ in 0..80 {
+                    // This is not a real symbol value
+                    // However we want to flush the filter
+                    self.push_sample(0f32);
+                }
+                self.calculate_tx_end = true;
             }
         }
-
-        // this is where we write it to next_transmission
-
-        // this is where we set report_tx_end
-        todo!()
     }
 
     fn read_output_samples(&mut self, out: &mut [i16]) -> usize {
@@ -338,6 +432,11 @@ impl Modulator for SoftModulator {
     }
 
     fn run(&mut self) -> Option<ModulatorAction> {
+        // Time-sensitive for accuracy, so handle it first
+        if let Some(end) = self.report_tx_end.take() {
+            return Some(ModulatorAction::TransmissionWillEnd(end));
+        }
+
         if self.next_read < self.next_len {
             return Some(ModulatorAction::ReadOutput);
         }
@@ -345,11 +444,6 @@ impl Modulator for SoftModulator {
         if self.update_idle {
             self.update_idle = false;
             return Some(ModulatorAction::SetIdle(self.idle));
-        }
-
-        if self.report_tx_end {
-            self.report_tx_end = false;
-            return Some(ModulatorAction::TransmissionWillEnd(self.tx_end_time));
         }
 
         if self.try_get_frame {
