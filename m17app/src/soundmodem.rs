@@ -1,5 +1,6 @@
 use std::io::{self, ErrorKind, Read, Write};
-
+use std::sync::RwLock;
+use std::collections::VecDeque;
 use crate::tnc::{Tnc, TncError};
 use cpal::traits::DeviceTrait;
 use cpal::traits::HostTrait;
@@ -7,7 +8,7 @@ use cpal::traits::StreamTrait;
 use cpal::{SampleFormat, SampleRate};
 use log::debug;
 use m17core::kiss::MAX_FRAME_LEN;
-use m17core::modem::{Demodulator, SoftDemodulator};
+use m17core::modem::{Demodulator, Modulator, ModulatorAction, SoftDemodulator, SoftModulator};
 use m17core::tnc::SoftTnc;
 use std::fs::File;
 use std::path::PathBuf;
@@ -22,11 +23,11 @@ pub struct Soundmodem {
 }
 
 impl Soundmodem {
-    pub fn new_with_input<T: InputSource>(input: T) -> Self {
+    pub fn new_with_input_and_output<I: InputSource, O: OutputSink>(input: I, output: O) -> Self {
         // must create TNC here
         let (event_tx, event_rx) = sync_channel(128);
         let (kiss_out_tx, kiss_out_rx) = sync_channel(128);
-        spawn_soundmodem_worker(event_tx.clone(), event_rx, kiss_out_tx, Box::new(input));
+        spawn_soundmodem_worker(event_tx.clone(), event_rx, kiss_out_tx, Box::new(input), Box::new(output));
         Self {
             event_tx,
             kiss_out_rx: Arc::new(Mutex::new(kiss_out_rx)),
@@ -110,6 +111,11 @@ pub enum SoundmodemEvent {
     BasebandInput(Arc<[i16]>),
     Start,
     Close,
+    DidReadFromOutputBuffer {
+        len: usize,
+        timestamp: Instant,
+    },
+    OutputUnderrun,
 }
 
 fn spawn_soundmodem_worker(
@@ -117,13 +123,23 @@ fn spawn_soundmodem_worker(
     event_rx: Receiver<SoundmodemEvent>,
     kiss_out_tx: SyncSender<Arc<[u8]>>,
     input: Box<dyn InputSource>,
+    output: Box<dyn OutputSink>,
 ) {
     std::thread::spawn(move || {
         // TODO: should be able to provide a custom Demodulator for a soundmodem
-        let mut demod = SoftDemodulator::new();
+        let mut demodulator = SoftDemodulator::new();
+        let mut modulator = SoftModulator::new();
         let mut tnc = SoftTnc::new();
         let mut buf = [0u8; MAX_FRAME_LEN];
+        let out_buffer = Arc::new(RwLock::new(OutputBuffer::new()));
+        let mut out_samples = [0i16; 1024];
+        let start = Instant::now();
         while let Ok(ev) = event_rx.recv() {
+            // Update clock on TNC before we do anything
+            let sample_time = (start.elapsed().as_nanos() / 48000) as u64;
+            tnc.set_now(sample_time);
+            
+            // Handle event
             match ev {
                 SoundmodemEvent::Kiss(k) => {
                     let _n = tnc.write_kiss(&k);
@@ -132,7 +148,7 @@ fn spawn_soundmodem_worker(
                 }
                 SoundmodemEvent::BasebandInput(b) => {
                     for sample in &*b {
-                        if let Some(frame) = demod.demod(*sample) {
+                        if let Some(frame) = demodulator.demod(*sample) {
                             tnc.handle_frame(frame);
                             loop {
                                 let n = tnc.read_kiss(&mut buf);
@@ -144,9 +160,53 @@ fn spawn_soundmodem_worker(
                             }
                         }
                     }
+                    tnc.set_data_carrier_detect(demodulator.data_carrier_detect());
                 }
-                SoundmodemEvent::Start => input.start(event_tx.clone()),
+                SoundmodemEvent::Start => {
+                    input.start(event_tx.clone());
+                    output.start(event_tx.clone(), out_buffer.clone());
+                },
                 SoundmodemEvent::Close => break,
+                SoundmodemEvent::DidReadFromOutputBuffer { len, timestamp } => {
+                    let (occupied, internal_latency) = {
+                        let out_buffer = out_buffer.read().unwrap();
+                        (out_buffer.samples.len(), out_buffer.latency)
+                    };
+                    let internal_latency = (internal_latency.as_secs_f32() * 48000.0) as usize;
+                    let dynamic_latency = len.saturating_sub((timestamp.elapsed().as_secs_f32() * 48000.0) as usize);
+                    modulator.update_output_buffer(occupied, 48000, internal_latency + dynamic_latency);
+                },
+                SoundmodemEvent::OutputUnderrun => {
+                    // TODO: cancel transmission, send empty data frame to host
+                }
+            }
+            
+            // Let the modulator do what it wants
+            while let Some(action) = modulator.run() {
+                match action {
+                    ModulatorAction::SetIdle(idling) => {
+                        out_buffer.write().unwrap().idling = idling;
+                    },
+                    ModulatorAction::GetNextFrame => {
+                        modulator.provide_next_frame(tnc.read_tx_frame());
+                    },
+                    ModulatorAction::ReadOutput => {
+                        loop {
+                            let n = modulator.read_output_samples(&mut out_samples);
+                            if n == 0 {
+                                break;
+                            }
+                            let mut out_buffer = out_buffer.write().unwrap();
+                            for s in &out_samples[0..n] {
+                                out_buffer.samples.push_back(*s);
+                            }
+                        }
+                        
+                    },
+                    ModulatorAction::TransmissionWillEnd(in_samples) => {
+                        tnc.set_tx_end_time(in_samples);
+                    },
+                }
             }
         }
     });
@@ -158,6 +218,7 @@ pub trait InputSource: Send + Sync + 'static {
 }
 
 pub struct InputSoundcard {
+    // TODO: allow for inversion both here and in output
     cpal_name: Option<String>,
     end_tx: Mutex<Option<Sender<()>>>,
 }
@@ -273,6 +334,93 @@ impl InputSource for InputRrcFile {
                     break;
                 }
             }
+        });
+        *self.end_tx.lock().unwrap() = Some(end_tx);
+    }
+
+    fn close(&self) {
+        let _ = self.end_tx.lock().unwrap().take();
+    }
+}
+
+pub struct OutputBuffer {
+    idling: bool,
+    // TODO: something more efficient
+    samples: VecDeque<i16>,
+    latency: Duration,
+}
+
+impl OutputBuffer {
+    pub fn new() -> Self {
+        Self {
+            idling: true,
+            samples: VecDeque::new(),
+            latency: Duration::ZERO,
+        }
+    }
+}
+
+pub trait OutputSink: Send + Sync + 'static {
+    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>);
+    fn close(&self);
+}
+
+pub struct OutputRrcFile {
+    path: PathBuf,
+    end_tx: Mutex<Option<Sender<()>>>,
+}
+
+impl OutputRrcFile {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            end_tx: Mutex::new(None),
+        }
+    }
+}
+
+impl OutputSink for OutputRrcFile {
+    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>) {
+        let (end_tx, end_rx) = channel();
+        let path = self.path.clone();
+        std::thread::spawn(move || {
+            // TODO: error handling
+            let mut file = File::create(path).unwrap();
+
+            // assuming 48 kHz for now
+            const TICK: Duration = Duration::from_millis(25);
+            const SAMPLES_PER_TICK: usize = 1200;
+
+            // flattened BE i16s for writing
+            let mut buf = [0u8; SAMPLES_PER_TICK * 2];
+            let mut next_tick = Instant::now() + TICK;
+
+            loop {
+                std::thread::sleep(next_tick.duration_since(Instant::now()));
+                next_tick = next_tick + TICK;
+                if end_rx.try_recv() != Err(TryRecvError::Empty) {
+                    break;
+                }
+                
+                let mut buffer = buffer.write().unwrap();
+                for out in buf.chunks_mut(2) {
+                    if let Some(s) = buffer.samples.pop_front() {
+                        let be = s.to_be_bytes();
+                        out.copy_from_slice(&[be[0], be[1]]);
+                    } else if buffer.idling {
+                        out.copy_from_slice(&[0, 0]);
+                    } else {
+                        debug!("output rrc file had underrun");
+                        let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
+                        break;
+                    }
+                }
+                if let Err(e) = file.write_all(&buf) {
+                    debug!("failed to write to rrc file: {e:?}");
+                    break;
+                }
+            }
+            
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
     }

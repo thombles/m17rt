@@ -1,4 +1,5 @@
 use crate::kiss::{KissBuffer, KissFrame};
+use crate::modem::ModulatorFrame;
 use crate::protocol::{Frame, LichCollection, LsfFrame, Mode, PacketFrameCounter};
 
 /// Handles the KISS protocol and frame management for `SoftModulator` and `SoftDemodulator`.
@@ -129,15 +130,19 @@ impl SoftTnc {
         }
     }
 
-    /// Update the number of samples that have been received by the incoming stream, as a form of timekeeping
-    pub fn advance_samples(&mut self, _samples: u64) {}
-
     pub fn set_data_carrier_detect(&mut self, _dcd: bool) {}
+    
+    pub fn set_now(&mut self, samples: u64) {}
+    
+    pub fn set_tx_end_time(&mut self, in_samples: usize) {
+        // This is a relative time from now, expressed in samples
+        // Use the time from set_now() to decide when to drop PTT
+    }
 
-    pub fn read_tx_frame(&mut self) -> Result<Option<Frame>, SoftTncError> {
-        // yes we want to deal with Frames here
+    pub fn read_tx_frame(&mut self) -> Option<ModulatorFrame> {
+        // yes we want to deal with frames here
         // it's important to establish successful decode that SoftDemodulator is aware of the frame innards
-        Ok(None)
+        None
     }
 
     /// Read KISS message to be sent to host.

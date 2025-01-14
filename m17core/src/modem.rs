@@ -184,7 +184,7 @@ pub trait Modulator {
     );
 
     /// Supply the next frame available from the TNC, if it was requested.
-    fn next_frame(&mut self, frame: Option<ModulatorFrame>);
+    fn provide_next_frame(&mut self, frame: Option<ModulatorFrame>);
 
     /// Calculate and write out output samples for the soundcard.
     ///
@@ -350,7 +350,7 @@ impl Modulator for SoftModulator {
         self.request_frame_if_space();
     }
 
-    fn next_frame(&mut self, frame: Option<ModulatorFrame>) {
+    fn provide_next_frame(&mut self, frame: Option<ModulatorFrame>) {
         let Some(frame) = frame else {
             self.try_get_frame = false;
             return;
