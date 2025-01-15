@@ -94,7 +94,7 @@ pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<LsfFrame> {
         None => return None,
     };
     debug!("full lsf: {:?}", lsf.0);
-    let crc = lsf.crc();
+    let crc = lsf.check_crc();
     debug!("recv crc: {:04X}", crc);
     debug!("destination: {:?}", lsf.destination());
     debug!("source: {:?}", lsf.source());
@@ -141,6 +141,8 @@ pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame
         Some(packet) => packet,
         None => return None,
     };
+    // TODO: the spec is inconsistent about which bit in packet[25] is EOF
+    // https://github.com/M17-Project/M17_spec/issues/147
     let final_frame = (packet[25] & 0x04) > 0;
     let number = packet[25] >> 3;
     let counter = if final_frame {

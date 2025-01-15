@@ -1,23 +1,23 @@
-use crate::address::Address;
+use crate::address::{encode_address, Address};
 
 pub(crate) const LSF_SYNC: [i8; 8] = [1, 1, 1, 1, -1, -1, 1, -1];
 pub(crate) const BERT_SYNC: [i8; 8] = [-1, 1, -1, -1, 1, 1, 1, 1];
 pub(crate) const STREAM_SYNC: [i8; 8] = [-1, -1, -1, -1, 1, 1, -1, 1];
 pub(crate) const PACKET_SYNC: [i8; 8] = [1, -1, 1, 1, -1, -1, -1, -1];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Mode {
     Packet,
     Stream,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum DataType {
     Reserved,
     Data,
     Voice,
     VoiceAndData,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum EncryptionType {
     None,
     Scrambler,
@@ -33,7 +33,7 @@ pub enum Frame {
     // BERT
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum PacketType {
     /// RAW
     Raw,
@@ -93,7 +93,8 @@ impl PacketType {
 pub struct LsfFrame(pub [u8; 30]);
 
 impl LsfFrame {
-    pub fn crc(&self) -> u16 {
+    /// Calculate crc of entire frame. If zero, it is a valid frame.
+    pub fn check_crc(&self) -> u16 {
         crate::crc::m17_crc(&self.0)
     }
 
@@ -106,7 +107,7 @@ impl LsfFrame {
     }
 
     pub fn mode(&self) -> Mode {
-        if self.0[12] & 0x01 > 0 {
+        if self.lsf_type() & 0x0001 > 0 {
             Mode::Stream
         } else {
             Mode::Packet
@@ -124,7 +125,7 @@ impl LsfFrame {
     }
 
     pub fn encryption_type(&self) -> EncryptionType {
-        match (self.0[12] >> 3) & 0x03 {
+        match (self.lsf_type() >> 3) & 0x0003 {
             0b00 => EncryptionType::None,
             0b01 => EncryptionType::Scrambler,
             0b10 => EncryptionType::Aes,
@@ -136,15 +137,68 @@ impl LsfFrame {
     // TODO: encryption sub-type
 
     pub fn channel_access_number(&self) -> u8 {
-        (self.0[12] >> 7) & 0x0f
+        ((self.lsf_type() >> 7) & 0x000f) as u8
     }
 
     pub fn meta(&self) -> [u8; 14] {
         self.0[14..28].try_into().unwrap()
     }
+
+    pub fn set_destination(&mut self, destination: &Address) {
+        self.0[0..6].copy_from_slice(&encode_address(&destination));
+        self.recalculate_crc();
+    }
+
+    pub fn set_source(&mut self, source: &Address) {
+        self.0[6..12].copy_from_slice(&encode_address(&source));
+        self.recalculate_crc();
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        let existing_type = self.lsf_type();
+        let new_type = (existing_type & !0x0001) | if mode == Mode::Stream { 1 } else { 0 };
+        self.0[12..14].copy_from_slice(&new_type.to_be_bytes());
+        self.recalculate_crc();
+    }
+
+    pub fn set_data_type(&mut self, data_type: DataType) {
+        let type_part = match data_type {
+            DataType::Reserved => 0b00 << 1,
+            DataType::Data => 0b01 << 1,
+            DataType::Voice => 0b10 << 1,
+            DataType::VoiceAndData => 0b11 << 1,
+        };
+        let existing_type = self.lsf_type();
+        let new_type = (existing_type & !0x0006) | type_part;
+        self.0[12..14].copy_from_slice(&new_type.to_be_bytes());
+        self.recalculate_crc();
+    }
+
+    pub fn set_encryption_type(&mut self, encryption_type: EncryptionType) {
+        let type_part = match encryption_type {
+            EncryptionType::None => 0b00 << 3,
+            EncryptionType::Scrambler => 0b01 << 3,
+            EncryptionType::Aes => 0b10 << 3,
+            EncryptionType::Other => 0b11 << 3,
+        };
+        let existing_type = self.lsf_type();
+        let new_type = (existing_type & !0x0018) | type_part;
+        self.0[12..14].copy_from_slice(&new_type.to_be_bytes());
+        self.recalculate_crc();
+    }
+
+    fn recalculate_crc(&mut self) {
+        let new_crc = crate::crc::m17_crc(&self.0[0..28]);
+        self.0[28..30].copy_from_slice(&new_crc.to_be_bytes());
+        debug_assert_eq!(self.check_crc(), 0);
+    }
+
+    fn lsf_type(&self) -> u16 {
+        u16::from_be_bytes([self.0[12], self.0[13]])
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StreamFrame {
     /// Which LICH segment is given in this frame, from 0 to 5 inclusive
     pub lich_idx: u8,

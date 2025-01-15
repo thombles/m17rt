@@ -1,6 +1,8 @@
-use crate::kiss::{KissBuffer, KissFrame};
+use crate::kiss::{KissBuffer, KissFrame, PORT_PACKET_BASIC, PORT_PACKET_FULL, PORT_STREAM};
 use crate::modem::ModulatorFrame;
-use crate::protocol::{Frame, LichCollection, LsfFrame, Mode, PacketFrameCounter};
+use crate::protocol::{
+    Frame, LichCollection, LsfFrame, Mode, PacketFrame, PacketFrameCounter, StreamFrame,
+};
 
 /// Handles the KISS protocol and frame management for `SoftModulator` and `SoftDemodulator`.
 ///
@@ -15,6 +17,51 @@ pub struct SoftTnc {
 
     /// Current RX or TX function of the TNC.
     state: State,
+
+    /// Latest state of data carrier detect from demodulator - controls whether we can go to TX
+    dcd: bool,
+
+    /// Current monotonic time, counted in samples
+    now: u64,
+
+    // TODO: use a static ring buffer crate of some sort?
+    /// Circular buffer of packets enqueued for transmission
+    packet_queue: [PendingPacket; 4],
+
+    /// Next slot to fill
+    packet_next: usize,
+
+    /// Current packet index, which is either partly transmitted or not transmitted at all.
+    packet_curr: usize,
+
+    /// If true, packet_next == packet_curr implies full queue. packet_next is invalid.
+    /// If false, it implies empty queue.
+    packet_full: bool,
+
+    /// The LSF for a stream we are going to start transmitting.
+    ///
+    /// This serves as a general indicator that we want to tx a stream.
+    stream_pending_lsf: Option<LsfFrame>,
+
+    /// Circular buffer of stream data enqueued for transmission.
+    ///
+    /// When the queue empties out, we hope that the last one has the end-of-stream flag set.
+    /// Otherwise a buffer underrun has occurred.
+    ///
+    /// Overruns are less troublesome - we can drop frames and receiving stations should cope.
+    stream_queue: [StreamFrame; 8],
+
+    /// Next slot to fill
+    stream_next: usize,
+
+    /// Current unsent stream frame index
+    stream_curr: usize,
+
+    /// True if stream_next == stream_curr because the queue is full. stream_next is invalid.
+    stream_full: bool,
+
+    /// Should PTT be on right now? Polled by external
+    ptt: bool,
 }
 
 impl SoftTnc {
@@ -23,6 +70,18 @@ impl SoftTnc {
             kiss_buffer: KissBuffer::new(),
             outgoing_kiss: None,
             state: State::Idle,
+            dcd: false,
+            now: 0,
+            packet_queue: Default::default(),
+            packet_next: 0,
+            packet_curr: 0,
+            packet_full: false,
+            stream_pending_lsf: None,
+            stream_queue: Default::default(),
+            stream_next: 0,
+            stream_curr: 0,
+            stream_full: false,
+            ptt: false,
         }
     }
 
@@ -106,7 +165,7 @@ impl SoftTnc {
                             let lsf = LsfFrame(maybe_lsf);
                             // LICH can change mid-transmission so wait until the CRC is correct
                             // to ensure (to high probability) we haven't done a "torn read"
-                            if lsf.crc() == 0 {
+                            if lsf.check_crc() == 0 {
                                 let kiss = KissFrame::new_stream_setup(&lsf.0).unwrap();
                                 self.kiss_to_host(kiss);
                                 // TODO: avoid discarding the first data payload here
@@ -130,19 +189,99 @@ impl SoftTnc {
         }
     }
 
-    pub fn set_data_carrier_detect(&mut self, _dcd: bool) {}
-    
-    pub fn set_now(&mut self, samples: u64) {}
-    
+    pub fn set_data_carrier_detect(&mut self, dcd: bool) {
+        self.dcd = dcd;
+    }
+
+    pub fn set_now(&mut self, now_samples: u64) {
+        self.now = now_samples;
+        match self.state {
+            State::TxEndingAtTime(time) => {
+                if now_samples >= time {
+                    self.ptt = false;
+                    self.state = State::Idle;
+                }
+            }
+            _ => (),
+        }
+    }
+
+    pub fn ptt(&self) -> bool {
+        self.ptt
+    }
+
     pub fn set_tx_end_time(&mut self, in_samples: usize) {
-        // This is a relative time from now, expressed in samples
-        // Use the time from set_now() to decide when to drop PTT
+        match self.state {
+            State::TxEnding => {
+                self.state = State::TxEndingAtTime(self.now + in_samples as u64);
+            }
+            _ => (),
+        }
     }
 
     pub fn read_tx_frame(&mut self) -> Option<ModulatorFrame> {
-        // yes we want to deal with frames here
-        // it's important to establish successful decode that SoftDemodulator is aware of the frame innards
-        None
+        match self.state {
+            State::Idle | State::RxAcquiringStream(_) | State::RxStream(_) | State::RxPacket(_) => {
+                // We will let CSMA decide whether to actually go ahead.
+                // That's not implemented yet, so let's just check DCD.
+                let channel_free = !self.dcd;
+                let stream_wants_to_tx = self.stream_pending_lsf.is_some();
+                let packet_wants_to_tx = self.packet_full || (self.packet_next != self.packet_curr);
+                if channel_free && stream_wants_to_tx {
+                    self.state = State::TxStream;
+                } else if channel_free && packet_wants_to_tx {
+                    self.state = State::TxPacket;
+                } else {
+                    return None;
+                }
+                self.ptt = true;
+                // TODO: true txdelay
+                Some(ModulatorFrame::Preamble { tx_delay: 0 })
+            }
+            State::TxStream => {
+                if !self.stream_full && self.stream_next == self.stream_curr {
+                    return None;
+                }
+                if let Some(lsf) = self.stream_pending_lsf.take() {
+                    return Some(ModulatorFrame::Lsf(lsf));
+                }
+                let frame = self.stream_queue[self.stream_curr].clone();
+                if self.stream_full {
+                    self.stream_full = false;
+                }
+                self.stream_curr = (self.stream_curr + 1) % 8;
+                if frame.end_of_stream {
+                    self.state = State::Idle;
+                }
+                Some(ModulatorFrame::Stream(frame))
+            }
+            State::TxStreamSentEndOfStream => {
+                self.state = State::TxEnding;
+                Some(ModulatorFrame::EndOfTransmission)
+            }
+            State::TxPacket => {
+                if !self.packet_full && self.packet_next == self.packet_curr {
+                    return None;
+                }
+                while self.packet_next != self.packet_curr {
+                    match self.packet_queue[self.packet_curr].next_frame() {
+                        Some(frame) => {
+                            return Some(frame);
+                        }
+                        None => {
+                            self.packet_curr = (self.packet_curr + 1) % 4;
+                        }
+                    }
+                }
+                self.state = State::TxEnding;
+                Some(ModulatorFrame::EndOfTransmission)
+            }
+            State::TxEnding | State::TxEndingAtTime(_) => {
+                // Once we have signalled EOT we withold any new frames until
+                // the channel fully clears and we are ready to TX again
+                None
+            }
+        }
     }
 
     /// Read KISS message to be sent to host.
@@ -165,13 +304,20 @@ impl SoftTnc {
         }
     }
 
+    /// Host sends in some KISS data.
     pub fn write_kiss(&mut self, buf: &[u8]) -> usize {
         let target_buf = self.kiss_buffer.buf_remaining();
         let n = buf.len().min(target_buf.len());
         target_buf[0..n].copy_from_slice(&buf[0..n]);
         self.kiss_buffer.did_write(n);
-        while let Some(_kiss_frame) = self.kiss_buffer.next_frame() {
-            // TODO: handle host-to-TNC message
+        while let Some(kiss_frame) = self.kiss_buffer.next_frame() {
+            let Ok(port) = kiss_frame.port() else {
+                continue;
+            };
+            if port == PORT_PACKET_BASIC {
+            } else if port == PORT_PACKET_FULL {
+            } else if port == PORT_STREAM {
+            }
         }
         n
     }
@@ -196,7 +342,7 @@ struct OutgoingKiss {
 }
 
 enum State {
-    /// Nothing happening.
+    /// Nothing happening. We may have TX data queued but we won't act on it until CSMA opens up.
     Idle,
 
     /// We received some stream data but missed the leading LSF so we are trying to assemble from LICH.
@@ -207,7 +353,21 @@ enum State {
 
     /// We are receiving a packet. All is well so far, and there is more data to come before we tell the host.
     RxPacket(RxPacketState),
-    // TODO: TX
+
+    /// PTT is on and this is a stream-type transmission. New data may be added.
+    TxStream,
+
+    /// We have delivered the last frame in the current stream
+    TxStreamSentEndOfStream,
+
+    /// PTT is on and this is a packet-type transmission. New packets may be enqueued.
+    TxPacket,
+
+    /// We gave modulator an EndOfTransmission. PTT is still on, waiting for modulator to advise end time.
+    TxEnding,
+
+    /// Ending transmission, PTT remains on, but we know the timestamp at which we should disengage it.
+    TxEndingAtTime(u64),
 }
 
 struct RxAcquiringStreamState {
@@ -233,6 +393,61 @@ struct RxPacketState {
     /// Number of payload frames we have received. If we are stably in the RxPacket state,
     /// this will be between 0 and 32 inclusive.
     count: usize,
+}
+
+struct PendingPacket {
+    lsf: Option<LsfFrame>,
+
+    app_data: [u8; 825],
+    app_data_len: usize,
+    app_data_transmitted: usize,
+}
+
+impl PendingPacket {
+    /// Returns next frame, not including preamble or EOT.
+    ///
+    /// False means all data frames have been sent.
+    fn next_frame(&mut self) -> Option<ModulatorFrame> {
+        if let Some(lsf) = self.lsf.take() {
+            return Some(ModulatorFrame::Lsf(lsf));
+        }
+        if self.app_data_len == self.app_data_transmitted {
+            return None;
+        }
+        let remaining = self.app_data_len - self.app_data_transmitted;
+        let (counter, data_len) = if remaining <= 25 {
+            (
+                PacketFrameCounter::FinalFrame {
+                    payload_len: remaining,
+                },
+                remaining,
+            )
+        } else {
+            (
+                PacketFrameCounter::Frame {
+                    index: self.app_data_transmitted / 25,
+                },
+                25,
+            )
+        };
+        let mut payload = [0u8; 25];
+        payload.copy_from_slice(
+            &self.app_data[self.app_data_transmitted..(self.app_data_transmitted + data_len)],
+        );
+        self.app_data_transmitted += data_len;
+        Some(ModulatorFrame::Packet(PacketFrame { payload, counter }))
+    }
+}
+
+impl Default for PendingPacket {
+    fn default() -> Self {
+        Self {
+            lsf: None,
+            app_data: [0u8; 825],
+            app_data_len: 0,
+            app_data_transmitted: 0,
+        }
+    }
 }
 
 #[cfg(test)]

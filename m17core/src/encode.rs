@@ -35,7 +35,7 @@ pub(crate) fn encode_packet(frame: &PacketFrame) -> [f32; 192] {
         }
         PacketFrameCounter::FinalFrame { payload_len } => {
             type1[0..payload_len].copy_from_slice(&frame.payload[0..payload_len]);
-            type1[25] = (payload_len as u8) << 3 | 0x04;
+            type1[25] = ((payload_len as u8) << 3) | 0x04;
         }
     }
     let type3 = fec::encode(&type1, 206, p_3);

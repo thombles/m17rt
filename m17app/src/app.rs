@@ -156,7 +156,7 @@ fn spawn_reader<T: Tnc>(mut tnc: T, adapters: Arc<RwLock<Adapters>>) {
                             continue;
                         }
                         let lsf = LsfFrame(payload[0..30].try_into().unwrap());
-                        if lsf.crc() != 0 {
+                        if lsf.check_crc() != 0 {
                             debug!("LSF in full packet frame did not pass CRC");
                             continue;
                         }
@@ -199,7 +199,7 @@ fn spawn_reader<T: Tnc>(mut tnc: T, adapters: Arc<RwLock<Adapters>>) {
                         };
                         if n == 30 {
                             let lsf = LsfFrame(payload[0..30].try_into().unwrap());
-                            if lsf.crc() != 0 {
+                            if lsf.check_crc() != 0 {
                                 debug!("initial LSF in stream did not pass CRC");
                                 continue;
                             }

@@ -45,7 +45,6 @@ fn decode_base_40(mut encoded: u64) -> Callsign {
     callsign
 }
 
-#[allow(dead_code)]
 pub fn encode_address(address: &Address) -> [u8; 6] {
     let mut out: u64 = 0;
     match address {
