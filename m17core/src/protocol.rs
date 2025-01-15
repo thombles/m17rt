@@ -93,6 +93,16 @@ impl PacketType {
 pub struct LsfFrame(pub [u8; 30]);
 
 impl LsfFrame {
+    pub fn new_packet(source: &Address, destination: &Address) -> Self {
+        let mut out = Self([0u8; 30]);
+        out.set_source(source);
+        out.set_destination(destination);
+        out.set_mode(Mode::Packet);
+        out.set_data_type(DataType::Data);
+        out.set_encryption_type(EncryptionType::None);
+        out
+    }
+
     /// Calculate crc of entire frame. If zero, it is a valid frame.
     pub fn check_crc(&self) -> u16 {
         crate::crc::m17_crc(&self.0)

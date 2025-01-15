@@ -10,10 +10,8 @@ pub enum Address {
 ///
 /// May be up to 9 characters long - if it shorter then remaining space is filled with
 /// space characters.
-///
-/// If the "std" feature is enabled then callsigns be converted to or created from strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Callsign([u8; 9]);
+pub struct Callsign(pub [u8; 9]);
 
 static ALPHABET: [u8; 40] = [
     b' ', b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', b'I', b'J', b'K', b'L', b'M', b'N', b'O',

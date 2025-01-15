@@ -1,3 +1,4 @@
+use crate::address::{Address, Callsign};
 use crate::kiss::{KissBuffer, KissFrame, PORT_PACKET_BASIC, PORT_PACKET_FULL, PORT_STREAM};
 use crate::modem::ModulatorFrame;
 use crate::protocol::{
@@ -315,8 +316,55 @@ impl SoftTnc {
                 continue;
             };
             if port == PORT_PACKET_BASIC {
+                if self.packet_full {
+                    continue;
+                }
+                let mut pending = PendingPacket::new();
+                pending.app_data[0] = 0x00; // RAW
+                let Ok(mut len) = kiss_frame.decode_payload(&mut pending.app_data[1..]) else {
+                    continue;
+                };
+                len += 1; // for RAW prefix
+                let packet_crc = crate::crc::m17_crc(&pending.app_data[0..len]);
+                pending.app_data[len..len + 2].copy_from_slice(&packet_crc.to_be_bytes());
+                pending.app_data_len = len + 2;
+                pending.lsf = Some(LsfFrame::new_packet(
+                    &Address::Callsign(Callsign(b"M17RT-PKT".clone())),
+                    &Address::Broadcast,
+                ));
+                self.packet_queue[self.packet_next] = pending;
+                self.packet_next = (self.packet_next + 1) % 4;
+                if self.packet_next == self.packet_curr {
+                    self.packet_full = true;
+                }
             } else if port == PORT_PACKET_FULL {
+                if self.packet_full {
+                    continue;
+                }
+                let mut pending = PendingPacket::new();
+                let mut payload = [0u8; 855];
+                let Ok(len) = kiss_frame.decode_payload(&mut payload) else {
+                    continue;
+                };
+                if len < 33 {
+                    continue;
+                }
+                let mut lsf = LsfFrame([0u8; 30]);
+                lsf.0.copy_from_slice(&payload[0..30]);
+                if lsf.check_crc() != 0 {
+                    continue;
+                }
+                pending.lsf = Some(lsf);
+                let app_data_len = len - 30;
+                pending.app_data[0..app_data_len].copy_from_slice(&payload[30..]);
+                pending.app_data_len = app_data_len;
+                self.packet_queue[self.packet_next] = pending;
+                self.packet_next = (self.packet_next + 1) % 4;
+                if self.packet_next == self.packet_curr {
+                    self.packet_full = true;
+                }
             } else if port == PORT_STREAM {
+                // TODO: handle port 2
             }
         }
         n
@@ -404,6 +452,15 @@ struct PendingPacket {
 }
 
 impl PendingPacket {
+    fn new() -> Self {
+        Self {
+            lsf: None,
+            app_data: [0u8; 825],
+            app_data_len: 0,
+            app_data_transmitted: 0,
+        }
+    }
+
     /// Returns next frame, not including preamble or EOT.
     ///
     /// False means all data frames have been sent.
