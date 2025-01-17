@@ -279,7 +279,6 @@ impl InputSource for InputSoundcard {
                 .build_input_stream(
                     &config.into(),
                     move |data: &[i16], _info: &cpal::InputCallbackInfo| {
-                        debug!("input has given us {} samples", data.len());
                         let out: Vec<i16> = data.iter().map(|s| *s).collect();
                         let _ = samples.try_send(SoundmodemEvent::BasebandInput(out.into()));
                     },
@@ -360,6 +359,48 @@ impl InputSource for InputRrcFile {
     }
 }
 
+pub struct NullInputSource {
+    end_tx: Mutex<Option<Sender<()>>>,
+}
+
+impl NullInputSource {
+    pub fn new() -> Self {
+        Self {
+            end_tx: Mutex::new(None),
+        }
+    }
+}
+
+impl InputSource for NullInputSource {
+    fn start(&self, samples: SyncSender<SoundmodemEvent>) {
+        let (end_tx, end_rx) = channel();
+        std::thread::spawn(move || {
+            // assuming 48 kHz for now
+            const TICK: Duration = Duration::from_millis(25);
+            const SAMPLES_PER_TICK: usize = 1200;
+            let mut next_tick = Instant::now() + TICK;
+
+            loop {
+                std::thread::sleep(next_tick.duration_since(Instant::now()));
+                next_tick = next_tick + TICK;
+                if end_rx.try_recv() != Err(TryRecvError::Empty) {
+                    break;
+                }
+                if let Err(e) = samples.try_send(SoundmodemEvent::BasebandInput(
+                    [0i16; SAMPLES_PER_TICK].into(),
+                )) {
+                    debug!("overflow feeding soundmodem: {e:?}");
+                }
+            }
+        });
+        *self.end_tx.lock().unwrap() = Some(end_tx);
+    }
+
+    fn close(&self) {
+        let _ = self.end_tx.lock().unwrap().take();
+    }
+}
+
 pub struct OutputBuffer {
     idling: bool,
     // TODO: something more efficient
@@ -418,24 +459,30 @@ impl OutputSink for OutputRrcFile {
                 if end_rx.try_recv() != Err(TryRecvError::Empty) {
                     break;
                 }
+                // For now only write deliberately modulated (non-idling) samples
+                // Multiple transmissions will get smooshed together
+                let mut buf_used = 0;
 
                 let mut buffer = buffer.write().unwrap();
                 for out in buf.chunks_mut(2) {
                     if let Some(s) = buffer.samples.pop_front() {
-                        let be = s.to_be_bytes();
+                        let be = s.to_le_bytes();
                         out.copy_from_slice(&[be[0], be[1]]);
-                    } else if buffer.idling {
-                        out.copy_from_slice(&[0, 0]);
-                    } else {
+                        buf_used += 2;
+                    } else if !buffer.idling {
                         debug!("output rrc file had underrun");
                         let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
                         break;
                     }
                 }
-                if let Err(e) = file.write_all(&buf) {
+                if let Err(e) = file.write_all(&buf[0..buf_used]) {
                     debug!("failed to write to rrc file: {e:?}");
                     break;
                 }
+                let _ = event_tx.send(SoundmodemEvent::DidReadFromOutputBuffer {
+                    len: buf_used / 2,
+                    timestamp: Instant::now(),
+                });
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
@@ -475,13 +522,22 @@ impl OutputSink for NullOutputSink {
                 }
 
                 let mut buffer = buffer.write().unwrap();
+                let mut taken = 0;
                 for _ in 0..SAMPLES_PER_TICK {
-                    if !buffer.samples.pop_front().is_some() && !buffer.idling {
-                        debug!("null output had underrun");
-                        let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
-                        break;
+                    if !buffer.samples.pop_front().is_some() {
+                        if !buffer.idling {
+                            debug!("null output had underrun");
+                            let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
+                            break;
+                        }
+                    } else {
+                        taken += 1;
                     }
                 }
+                let _ = event_tx.send(SoundmodemEvent::DidReadFromOutputBuffer {
+                    len: taken,
+                    timestamp: Instant::now(),
+                });
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);

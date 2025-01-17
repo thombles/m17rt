@@ -252,7 +252,7 @@ impl SoftTnc {
                 }
                 self.stream_curr = (self.stream_curr + 1) % 8;
                 if frame.end_of_stream {
-                    self.state = State::Idle;
+                    self.state = State::TxStreamSentEndOfStream;
                 }
                 Some(ModulatorFrame::Stream(frame))
             }
@@ -364,7 +364,38 @@ impl SoftTnc {
                     self.packet_full = true;
                 }
             } else if port == PORT_STREAM {
-                // TODO: handle port 2
+                let mut payload = [0u8; 30];
+                let Ok(len) = kiss_frame.decode_payload(&mut payload) else {
+                    continue;
+                };
+                if len < 26 {
+                    log::debug!("payload len too short");
+                    continue;
+                }
+                if len == 30 {
+                    let lsf = LsfFrame(payload);
+                    if lsf.check_crc() != 0 {
+                        continue;
+                    }
+                    self.stream_pending_lsf = Some(lsf);
+                } else {
+                    if self.stream_full {
+                        log::debug!("stream full");
+                        continue;
+                    }
+                    let frame_num_part = u16::from_be_bytes([payload[6], payload[7]]);
+                    self.stream_queue[self.stream_next] = StreamFrame {
+                        lich_idx: payload[5] >> 5,
+                        lich_part: payload[0..5].try_into().unwrap(),
+                        frame_number: frame_num_part & 0x7fff,
+                        end_of_stream: frame_num_part & 0x8000 > 0,
+                        stream_data: payload[8..24].try_into().unwrap(),
+                    };
+                    self.stream_next = (self.stream_next + 1) % 8;
+                    if self.stream_next == self.stream_curr {
+                        self.stream_full = true;
+                    }
+                }
             }
         }
         n

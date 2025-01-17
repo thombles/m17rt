@@ -244,8 +244,9 @@ pub enum ModulatorFrame {
 }
 
 pub struct SoftModulator {
+    // TODO: 2000 was overflowing around EOT, track down why
     /// Next modulated frame to output - 1920 samples for 40ms frame plus 80 for ramp-down
-    next_transmission: [i16; 2000],
+    next_transmission: [i16; 4000],
     /// How much of next_transmission should in fact be transmitted
     next_len: usize,
     /// How much of next_transmission has been read out
@@ -288,7 +289,7 @@ pub struct SoftModulator {
 impl SoftModulator {
     pub fn new() -> Self {
         Self {
-            next_transmission: [0i16; 2000],
+            next_transmission: [0i16; 4000],
             next_len: 0,
             next_read: 0,
             tx_delay_padding: 0,
@@ -306,20 +307,28 @@ impl SoftModulator {
     }
 
     fn push_sample(&mut self, dibit: f32) {
-        // Right now we are encoding everything as 1.0-scaled dibit floats
-        // This is a bit silly but it will do for a minute
-        // Max theoretical gain from the RRC filter is 4.328
-        // Let's bump everything to a baseline of 16383 / 4.328 = 3785.35
-        // This is not particularly high but at least we won't ever hit the top
-        self.filter_win[self.filter_cursor] = dibit * 3785.0;
-        self.filter_cursor = (self.filter_cursor + 1) % 81;
-        let mut out: f32 = 0.0;
-        for i in 0..81 {
-            let filter_idx = (self.filter_cursor + i) % 81;
-            out += RRC_48K[i] * self.filter_win[filter_idx];
+        // TODO: 48 kHz assumption again
+        for i in 0..10 {
+            // Right now we are encoding everything as 1.0-scaled dibit floats
+            // This is a bit silly but it will do for a minute
+            // Max theoretical gain from the RRC filter is 4.328
+            // Let's bump everything to a baseline of 16383 / 4.328 = 3785.35
+            // This is not particularly high but at least we won't ever hit the top
+            if i == 0 {
+                // 10x the impulse with zeroes between for upsampling
+                self.filter_win[self.filter_cursor] = dibit * 3785.0 * 10.0;
+            } else {
+                self.filter_win[self.filter_cursor] = 0.0;
+            }
+            self.filter_cursor = (self.filter_cursor + 1) % 81;
+            let mut out: f32 = 0.0;
+            for i in 0..81 {
+                let filter_idx = (self.filter_cursor + i) % 81;
+                out += RRC_48K[i] * self.filter_win[filter_idx];
+            }
+            self.next_transmission[self.next_len] = out as i16;
+            self.next_len += 1;
         }
-        self.next_transmission[self.next_len] = out as i16;
-        self.next_len += 1;
     }
 
     fn request_frame_if_space(&mut self) {
@@ -336,6 +345,7 @@ impl Modulator for SoftModulator {
         capacity: usize,
         output_latency: usize,
     ) {
+        //log::debug!("modulator update_output_buffer {samples_to_play} {capacity} {output_latency}");
         self.output_latency = output_latency;
         self.buf_capacity = capacity;
         self.samples_in_buf = samples_to_play;
@@ -421,7 +431,7 @@ impl Modulator for SoftModulator {
         // then follow it with whatever might be left in next_transmission
         let next_remaining = self.next_len - self.next_read;
         if next_remaining > 0 {
-            let len = (out.len() - written).max(next_remaining);
+            let len = (out.len() - written).min(next_remaining);
             out[written..(written + len)]
                 .copy_from_slice(&self.next_transmission[self.next_read..(self.next_read + len)]);
             self.next_read += len;

@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
-members = [ "demod",
-    "m17app", "m17codec2", "m17core",
+members = [
+    "m17app", "m17codec2", "m17core", "tools/m17rt-demod", "tools/m17rt-mod",
 ]

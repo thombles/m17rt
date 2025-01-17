@@ -62,6 +62,7 @@ pub(crate) fn sync_burst_correlation(target: [i8; 8], samples: &[f32]) -> (f32, 
     if gain < SYNC_MIN_GAIN {
         return (f32::MAX, gain, shift);
     }
+
     let mut diff = 0.0;
     for i in 0..8 {
         let sym_diff = (((samples[i * 10] - shift) / gain) - target[i] as f32).abs();

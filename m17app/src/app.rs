@@ -1,7 +1,7 @@
 use crate::adapter::{PacketAdapter, StreamAdapter};
 use crate::tnc::Tnc;
 use m17core::kiss::{KissBuffer, KissCommand, KissFrame};
-use m17core::protocol::{EncryptionType, LsfFrame, PacketType};
+use m17core::protocol::{EncryptionType, LsfFrame, PacketType, StreamFrame};
 
 use log::debug;
 use std::collections::HashMap;
@@ -91,11 +91,19 @@ impl TxHandle {
 
     // add more methods here for stream outgoing
 
-    pub fn transmit_stream_start(&self /* lsf?, payload? what needs to be configured ?! */) {}
+    pub fn transmit_stream_start(&self, lsf: LsfFrame) {
+        // TODO: is asking for an LsfFrame a good idea or unfriendly API?
+        // What I should do here is create a LinkSetup struct which wraps an LsfFrame and can be loaded with a raw one
+        let kiss_frame = KissFrame::new_stream_setup(&lsf.0).unwrap();
+        let _ = self.event_tx.send(TncControlEvent::Kiss(kiss_frame));
+    }
 
     // as long as there is only one TNC it is implied there is only ever one stream transmission in flight
 
-    pub fn transmit_stream_next(&self, /* next payload,  */ end_of_stream: bool) {}
+    pub fn transmit_stream_next(&self, stream: StreamFrame) {
+        let kiss_frame = KissFrame::new_stream_data(&stream).unwrap();
+        let _ = self.event_tx.send(TncControlEvent::Kiss(kiss_frame));
+    }
 }
 
 /// Synchronised structure for listeners subscribing to packets and streams.

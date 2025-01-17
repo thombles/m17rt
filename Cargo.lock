@@ -284,18 +284,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
-name = "demod"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "env_logger",
- "log",
- "m17app",
- "m17codec2",
- "m17core",
-]
-
-[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -341,6 +329,12 @@ name = "hashbrown"
 version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289"
+
+[[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
 
 [[package]]
 name = "humantime"
@@ -451,6 +445,7 @@ version = "0.1.0"
 dependencies = [
  "codec2",
  "cpal",
+ "hound",
  "log",
  "m17app",
  "m17core",
@@ -463,6 +458,29 @@ dependencies = [
  "cai_golay",
  "crc",
  "log",
+]
+
+[[package]]
+name = "m17rt-demod"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "env_logger",
+ "log",
+ "m17app",
+ "m17codec2",
+ "m17core",
+]
+
+[[package]]
+name = "m17rt-mod"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "m17app",
+ "m17codec2",
+ "m17core",
 ]
 
 [[package]]

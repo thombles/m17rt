@@ -93,6 +93,16 @@ impl PacketType {
 pub struct LsfFrame(pub [u8; 30]);
 
 impl LsfFrame {
+    pub fn new_voice(source: &Address, destination: &Address) -> Self {
+        let mut out = Self([0u8; 30]);
+        out.set_source(source);
+        out.set_destination(destination);
+        out.set_mode(Mode::Stream);
+        out.set_data_type(DataType::Voice);
+        out.set_encryption_type(EncryptionType::None);
+        out
+    }
+
     pub fn new_packet(source: &Address, destination: &Address) -> Self {
         let mut out = Self([0u8; 30]);
         out.set_source(source);

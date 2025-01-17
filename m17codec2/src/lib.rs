@@ -6,15 +6,21 @@ use cpal::{Sample, SampleFormat, SampleRate};
 use log::debug;
 use m17app::adapter::StreamAdapter;
 use m17app::app::TxHandle;
+use m17core::address::Address;
+use m17core::address::Callsign;
 use m17core::protocol::LsfFrame;
+use m17core::protocol::StreamFrame;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{
     mpsc::{channel, Receiver, Sender},
     Arc, Mutex,
 };
+use std::time::Duration;
+use std::time::Instant;
 
 pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
     let codec2 = Codec2::new(Codec2Mode::MODE_3200);
@@ -85,7 +91,7 @@ impl StreamAdapter for Codec2Adapter {
 
     fn tnc_closed(&self) {}
 
-    fn stream_began(&self, lsf: LsfFrame) {
+    fn stream_began(&self, _lsf: LsfFrame) {
         // for now we will assume:
         // - unencrypted
         // - data type is Voice (Codec2 3200), not Voice+Data
@@ -94,7 +100,7 @@ impl StreamAdapter for Codec2Adapter {
         self.state.lock().unwrap().codec2 = Codec2::new(Codec2Mode::MODE_3200);
     }
 
-    fn stream_data(&self, frame_number: u16, is_final: bool, data: Arc<[u8; 16]>) {
+    fn stream_data(&self, _frame_number: u16, _is_final: bool, data: Arc<[u8; 16]>) {
         let mut state = self.state.lock().unwrap();
         for encoded in data.chunks(8) {
             if state.out_buf.len() < 1024 {
@@ -113,11 +119,6 @@ impl StreamAdapter for Codec2Adapter {
 
 fn output_cb(data: &mut [i16], state: &Mutex<AdapterState>) {
     let mut state = state.lock().unwrap();
-    debug!(
-        "sound card wants {} samples, we have {} in the buffer",
-        data.len(),
-        state.out_buf.len()
-    );
     for d in data {
         *d = state.out_buf.pop_front().unwrap_or(i16::EQUILIBRIUM);
     }
@@ -142,11 +143,6 @@ fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card
         .build_output_stream(
             &config.into(),
             move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
-                debug!(
-                    "callback {:?} playback {:?}",
-                    info.timestamp().callback,
-                    info.timestamp().playback
-                );
                 output_cb(data, &state);
             },
             |e| {
@@ -159,4 +155,65 @@ fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card
     stream.play().unwrap();
     let _ = end.recv();
     // it seems concrete impls of Stream have a Drop implementation that will handle termination
+}
+
+pub struct WavePlayer;
+
+impl WavePlayer {
+    pub fn play(path: PathBuf, tx: TxHandle) {
+        let mut reader = hound::WavReader::open(path).unwrap();
+        let mut samples = reader.samples::<i16>();
+
+        let mut codec = Codec2::new(Codec2Mode::MODE_3200);
+        let mut in_buf = [0i16; 160];
+        let mut out_buf = [0u8; 16];
+        let mut lsf_chunk: usize = 0;
+        const TICK: Duration = Duration::from_millis(40);
+        let mut next_tick = Instant::now() + TICK;
+        let mut frame_number = 0;
+
+        // TODO: need a better way to create addresses from std strings
+
+        let lsf = LsfFrame::new_voice(
+            &Address::Callsign(Callsign(b"VK7XT    ".clone())),
+            &Address::Broadcast,
+        );
+
+        tx.transmit_stream_start(lsf.clone());
+
+        loop {
+            let mut last_one = false;
+            for mut out in out_buf.chunks_mut(8) {
+                for i in 0..160 {
+                    let sample = match samples.next() {
+                        Some(Ok(sample)) => sample,
+                        _ => {
+                            last_one = true;
+                            0
+                        }
+                    };
+                    in_buf[i] = sample;
+                }
+                codec.encode(&mut out, &in_buf);
+            }
+            tx.transmit_stream_next(StreamFrame {
+                lich_idx: lsf_chunk as u8,
+                lich_part: lsf.0[lsf_chunk * 5..(lsf_chunk + 1) * 5]
+                    .try_into()
+                    .unwrap(),
+                frame_number,
+                end_of_stream: last_one,
+                stream_data: out_buf.clone(),
+            });
+            frame_number += 1;
+            lsf_chunk = (lsf_chunk + 1) % 6;
+
+            if last_one {
+                break;
+            }
+
+            std::thread::sleep(next_tick.duration_since(Instant::now()));
+            next_tick += TICK;
+        }
+    }
 }
