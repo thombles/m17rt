@@ -144,8 +144,8 @@ pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame
     };
     // TODO: the spec is inconsistent about which bit in packet[25] is EOF
     // https://github.com/M17-Project/M17_spec/issues/147
-    let final_frame = (packet[25] & 0x04) > 0;
-    let number = packet[25] >> 3;
+    let final_frame = (packet[25] & 0x80) > 0;
+    let number = (packet[25] >> 2) & 0x1f;
     let counter = if final_frame {
         PacketFrameCounter::FinalFrame {
             payload_len: number as usize,
