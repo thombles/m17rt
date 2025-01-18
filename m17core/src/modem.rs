@@ -419,7 +419,7 @@ impl Modulator for SoftModulator {
 
         // if we have pre-TX padding to accommodate TxDelay then expend that first
         if self.tx_delay_padding > 0 {
-            let len = out.len().max(self.tx_delay_padding);
+            let len = out.len().min(self.tx_delay_padding);
             self.tx_delay_padding -= len;
             for x in 0..len {
                 out[x] = 0;

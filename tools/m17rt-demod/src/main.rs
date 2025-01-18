@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub fn m17app_test() {
     //let path = PathBuf::from("../../../Data/test_vk7xt.rrc");
     let path = PathBuf::from("../../../Data/mymod.rrc");
+    //let path = PathBuf::from("../../../Data/mymod-noisy.raw");
     let source = InputRrcFile::new(path);
     //let source = InputSoundcard::new();
     let soundmodem = Soundmodem::new_with_input_and_output(source, NullOutputSink::new());

@@ -1,15 +1,17 @@
 use m17app::app::M17App;
 use m17app::soundmodem::{
-    InputRrcFile, InputSoundcard, NullInputSource, NullOutputSink, OutputRrcFile, Soundmodem,
+    InputRrcFile, InputSoundcard, NullInputSource, NullOutputSink, OutputRrcFile, OutputSoundcard,
+    Soundmodem,
 };
 use m17codec2::{Codec2Adapter, WavePlayer};
 use std::path::PathBuf;
 
 pub fn mod_test() {
     let in_path = PathBuf::from("../../../Data/test_vk7xt_8k.wav");
-    let out_path = PathBuf::from("../../../Data/mymod.rrc");
-    let soundmodem =
-        Soundmodem::new_with_input_and_output(NullInputSource::new(), OutputRrcFile::new(out_path));
+    //let out_path = PathBuf::from("../../../Data/mymod.rrc");
+    //let output = OutputRrcFile::new(out_path);
+    let output = OutputSoundcard::new();
+    let soundmodem = Soundmodem::new_with_input_and_output(NullInputSource::new(), output);
     let app = M17App::new(soundmodem);
     app.start();
     std::thread::sleep(std::time::Duration::from_secs(1));

@@ -212,6 +212,7 @@ impl SoftTnc {
     }
 
     pub fn set_tx_end_time(&mut self, in_samples: usize) {
+        log::debug!("tnc has been told that tx will complete in {in_samples} samples");
         match self.state {
             State::TxEnding => {
                 self.state = State::TxEndingAtTime(self.now + in_samples as u64);
