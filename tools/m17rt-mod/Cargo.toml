@@ -2,6 +2,9 @@
 name = "m17rt-mod"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
+publish = false
 
 [dependencies]
 m17core = { path = "../../m17core" }
