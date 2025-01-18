@@ -311,12 +311,11 @@ impl SoftModulator {
         for i in 0..10 {
             // Right now we are encoding everything as 1.0-scaled dibit floats
             // This is a bit silly but it will do for a minute
-            // Max theoretical gain from the RRC filter is 4.328
-            // Let's bump everything to a baseline of 16383 / 4.328 = 3785.35
-            // This is not particularly high but at least we won't ever hit the top
+            // Max possible gain from the RRC filter with upsampling is about 0.462
+            // Let's bump everything to a baseline of 16383 / 0.462 = 35461
+            // For normal signals this yields roughly 0.5 magnitude which is plenty
             if i == 0 {
-                // 10x the impulse with zeroes between for upsampling
-                self.filter_win[self.filter_cursor] = dibit * 3785.0 * 10.0;
+                self.filter_win[self.filter_cursor] = dibit * 35461.0;
             } else {
                 self.filter_win[self.filter_cursor] = 0.0;
             }
