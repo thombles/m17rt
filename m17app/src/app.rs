@@ -72,6 +72,8 @@ impl M17App {
     }
 
     pub fn close(&self) {
+        // TODO: blocking function to indicate TNC has finished closing
+        // then we could call this in a signal handler to ensure PTT is dropped before quit
         let _ = self.event_tx.send(TncControlEvent::Close);
     }
 }

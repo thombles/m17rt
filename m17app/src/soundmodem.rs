@@ -23,7 +23,7 @@ pub struct Soundmodem {
 }
 
 impl Soundmodem {
-    pub fn new_with_input_and_output<I: InputSource, O: OutputSink>(input: I, output: O) -> Self {
+    pub fn new<I: InputSource, O: OutputSink, P: Ptt>(input: I, output: O, ptt: P) -> Self {
         // must create TNC here
         let (event_tx, event_rx) = sync_channel(128);
         let (kiss_out_tx, kiss_out_rx) = sync_channel(128);
@@ -33,6 +33,7 @@ impl Soundmodem {
             kiss_out_tx,
             Box::new(input),
             Box::new(output),
+            Box::new(ptt),
         );
         Self {
             event_tx,
@@ -127,6 +128,7 @@ fn spawn_soundmodem_worker(
     kiss_out_tx: SyncSender<Arc<[u8]>>,
     input: Box<dyn InputSource>,
     output: Box<dyn OutputSink>,
+    mut ptt_driver: Box<dyn Ptt>,
 ) {
     std::thread::spawn(move || {
         // TODO: should be able to provide a custom Demodulator for a soundmodem
@@ -170,7 +172,10 @@ fn spawn_soundmodem_worker(
                     input.start(event_tx.clone());
                     output.start(event_tx.clone(), out_buffer.clone());
                 }
-                SoundmodemEvent::Close => break,
+                SoundmodemEvent::Close => {
+                    ptt_driver.ptt_off();
+                    break;
+                }
                 SoundmodemEvent::DidReadFromOutputBuffer { len, timestamp } => {
                     let (occupied, internal_latency) = {
                         let out_buffer = out_buffer.read().unwrap();
@@ -194,9 +199,9 @@ fn spawn_soundmodem_worker(
             let new_ptt = tnc.ptt();
             if new_ptt != ptt {
                 if new_ptt {
-                    // turn it on
+                    ptt_driver.ptt_on();
                 } else {
-                    // turn it off
+                    ptt_driver.ptt_off();
                 }
             }
             ptt = new_ptt;
@@ -636,4 +641,23 @@ impl OutputSink for OutputSoundcard {
     fn close(&self) {
         let _ = self.end_tx.lock().unwrap().take();
     }
+}
+
+pub trait Ptt: Send + 'static {
+    fn ptt_on(&mut self);
+    fn ptt_off(&mut self);
+}
+
+/// There is no PTT because this TNC will never make transmissions on a real radio.
+pub struct NullPtt;
+
+impl NullPtt {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Ptt for NullPtt {
+    fn ptt_on(&mut self) {}
+    fn ptt_off(&mut self) {}
 }

@@ -142,7 +142,7 @@ fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card
     let stream = device
         .build_output_stream(
             &config.into(),
-            move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
+            move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
                 output_cb(data, &state);
             },
             |e| {
