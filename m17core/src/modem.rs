@@ -27,8 +27,8 @@ pub struct SoftDemodulator {
     candidate: Option<DecodeCandidate>,
     /// How many samples have we received?
     sample: u64,
-    /// Remaining samples to ignore so once we already parse a frame we flush it out in full
-    suppress: u16,
+    /// Remaining samples to read in before attempting to decode the current candidate
+    samples_until_decode: Option<u16>,
 }
 
 impl SoftDemodulator {
@@ -40,7 +40,7 @@ impl SoftDemodulator {
             rx_cursor: 0,
             candidate: None,
             sample: 0,
-            suppress: 0,
+            samples_until_decode: None,
         }
     }
 }
@@ -60,14 +60,50 @@ impl Demodulator for SoftDemodulator {
 
         self.sample += 1;
 
-        if self.suppress > 0 {
-            self.suppress -= 1;
-            return None;
+        if let Some(samples_until_decode) = self.samples_until_decode {
+            let sud = samples_until_decode - 1;
+            if sud > 0 {
+                self.samples_until_decode = Some(sud);
+                return None;
+            }
+            self.samples_until_decode = None;
+
+            if let Some(c) = self.candidate.take() {
+                // we have capacity for 192 symbols * 10 upsamples
+                // we have calculated that the ideal sample point for 192nd symbol is right on the edge
+                // so take samples from the 10th slot all the way through.
+                let start_idx = self.rx_cursor + 1920 + 9;
+                let mut pkt_samples = [0f32; 192];
+                for i in 0..192 {
+                    let rx_idx = (start_idx + i * 10) % 1920;
+                    pkt_samples[i] = (self.rx_win[rx_idx] - c.shift) / c.gain;
+                }
+                match c.burst {
+                    SyncBurst::Lsf => {
+                        if let Some(frame) = parse_lsf(&pkt_samples) {
+                            return Some(Frame::Lsf(frame));
+                        }
+                    }
+                    SyncBurst::Bert => {
+                        // TODO: BERT
+                    }
+                    SyncBurst::Stream => {
+                        if let Some(frame) = parse_stream(&pkt_samples) {
+                            return Some(Frame::Stream(frame));
+                        }
+                    }
+                    SyncBurst::Packet => {
+                        if let Some(frame) = parse_packet(&pkt_samples) {
+                            return Some(Frame::Packet(frame));
+                        }
+                    }
+                }
+            }
         }
 
         let mut burst_window = [0f32; 8];
         for i in 0..8 {
-            let c = (self.rx_cursor + (i * 10)) % 1920;
+            let c = (self.rx_cursor + 1920 - 1 - ((7 - i) * 10)) % 1920;
             burst_window[i] = self.rx_win[c];
         }
 
@@ -103,47 +139,15 @@ impl Demodulator for SoftDemodulator {
                     .map(|c| c.burst == burst)
                     .unwrap_or(false)
             {
-                if let Some(c) = self.candidate.take() {
-                    let start_idx = self.rx_cursor + 1920 - (c.age as usize);
-                    let start_sample = self.sample - c.age as u64;
-                    let mut pkt_samples = [0f32; 192];
-                    for i in 0..192 {
-                        let rx_idx = (start_idx + i * 10) % 1920;
-                        pkt_samples[i] = (self.rx_win[rx_idx] - c.shift) / c.gain;
-                    }
-                    match c.burst {
-                        SyncBurst::Lsf => {
-                            debug!(
-                                "Found LSF at sample {} diff {} max {} shift {}",
-                                start_sample, c.diff, c.gain, c.shift
-                            );
-                            if let Some(frame) = parse_lsf(&pkt_samples) {
-                                self.suppress = 191 * 10;
-                                return Some(Frame::Lsf(frame));
-                            }
-                        }
-                        SyncBurst::Bert => {
-                            debug!("Found BERT at sample {} diff {}", start_sample, c.diff);
-                        }
-                        SyncBurst::Stream => {
-                            debug!(
-                                "Found STREAM at sample {} diff {} max {} shift {}",
-                                start_sample, c.diff, c.gain, c.shift
-                            );
-                            if let Some(frame) = parse_stream(&pkt_samples) {
-                                self.suppress = 191 * 10;
-                                return Some(Frame::Stream(frame));
-                            }
-                        }
-                        SyncBurst::Packet => {
-                            debug!("Found PACKET at sample {} diff {}", start_sample, c.diff);
-                            if let Some(frame) = parse_packet(&pkt_samples) {
-                                self.suppress = 191 * 10;
-                                return Some(Frame::Packet(frame));
-                            }
-                        }
-                    }
-                }
+                // wait until the rest of the frame is in the buffer
+                let c = self.candidate.as_ref().unwrap();
+                self.samples_until_decode = Some((184 * 10) - (c.age as u16));
+                debug!(
+                    "Found {:?} at sample {} diff {}",
+                    c.burst,
+                    self.sample - c.age as u64,
+                    c.diff
+                );
             }
         }
 
