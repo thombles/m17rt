@@ -4,6 +4,8 @@ pub(crate) const LSF_SYNC: [i8; 8] = [1, 1, 1, 1, -1, -1, 1, -1];
 pub(crate) const BERT_SYNC: [i8; 8] = [-1, 1, -1, -1, 1, 1, 1, 1];
 pub(crate) const STREAM_SYNC: [i8; 8] = [-1, -1, -1, -1, 1, 1, -1, 1];
 pub(crate) const PACKET_SYNC: [i8; 8] = [1, -1, 1, 1, -1, -1, -1, -1];
+pub(crate) const PREAMBLE: [i8; 8] = [1, -1, 1, -1, 1, -1, 1, -1];
+pub(crate) const END_OF_TRANSMISSION: [i8; 8] = [1, 1, 1, 1, 1, 1, -1, 1];
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Mode {

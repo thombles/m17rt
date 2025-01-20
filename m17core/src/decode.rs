@@ -3,8 +3,8 @@ use crate::{
     fec::{self, p_1, p_2, p_3},
     interleave::interleave,
     protocol::{
-        LsfFrame, PacketFrame, PacketFrameCounter, StreamFrame, BERT_SYNC, LSF_SYNC, PACKET_SYNC,
-        STREAM_SYNC,
+        LsfFrame, PacketFrame, PacketFrameCounter, StreamFrame, BERT_SYNC, END_OF_TRANSMISSION,
+        LSF_SYNC, PACKET_SYNC, PREAMBLE, STREAM_SYNC,
     },
     random::random_xor,
 };
@@ -33,6 +33,8 @@ pub(crate) enum SyncBurst {
     Bert,
     Stream,
     Packet,
+    Preamble,
+    EndOfTransmission,
 }
 
 impl SyncBurst {
@@ -42,6 +44,8 @@ impl SyncBurst {
             Self::Bert => BERT_SYNC,
             Self::Stream => STREAM_SYNC,
             Self::Packet => PACKET_SYNC,
+            Self::Preamble => PREAMBLE,
+            Self::EndOfTransmission => END_OF_TRANSMISSION,
         }
     }
 }

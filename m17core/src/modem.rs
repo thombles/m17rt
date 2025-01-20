@@ -29,6 +29,8 @@ pub struct SoftDemodulator {
     sample: u64,
     /// Remaining samples to read in before attempting to decode the current candidate
     samples_until_decode: Option<u16>,
+    /// Do we think there is a data carrier, i.e., channel in use? If so, at what sample does it expire?
+    dcd: Option<u64>,
 }
 
 impl SoftDemodulator {
@@ -41,6 +43,25 @@ impl SoftDemodulator {
             candidate: None,
             sample: 0,
             samples_until_decode: None,
+            dcd: None,
+        }
+    }
+}
+
+impl SoftDemodulator {
+    fn dcd_until(&mut self, end_sample: u64) {
+        if self.dcd.is_none() {
+            debug!("SoftDemodulator DCD on");
+        }
+        self.dcd = Some(end_sample);
+    }
+
+    fn check_dcd(&mut self) {
+        if let Some(end_sample) = self.dcd {
+            if self.sample > end_sample {
+                self.dcd = None;
+                debug!("SoftDemodulator DCD off");
+            }
         }
     }
 }
@@ -59,6 +80,7 @@ impl Demodulator for SoftDemodulator {
         self.rx_cursor = (self.rx_cursor + 1) % 1920;
 
         self.sample += 1;
+        self.check_dcd();
 
         if let Some(samples_until_decode) = self.samples_until_decode {
             let sud = samples_until_decode - 1;
@@ -97,6 +119,9 @@ impl Demodulator for SoftDemodulator {
                             return Some(Frame::Packet(frame));
                         }
                     }
+                    SyncBurst::Preamble | SyncBurst::EndOfTransmission => {
+                        // should never be chosen as a candidate
+                    }
                 }
             }
         }
@@ -105,6 +130,15 @@ impl Demodulator for SoftDemodulator {
         for i in 0..8 {
             let c = (self.rx_cursor + 1920 - 1 - ((7 - i) * 10)) % 1920;
             burst_window[i] = self.rx_win[c];
+        }
+
+        for burst in [SyncBurst::Preamble, SyncBurst::EndOfTransmission] {
+            let (diff, _, _) = sync_burst_correlation(burst.target(), &burst_window);
+            if diff < SYNC_THRESHOLD {
+                // arbitrary choice, 240 samples = 5ms
+                // these bursts keep repeating so it will keep pushing out the DCD end time
+                self.dcd_until(self.sample + 240);
+            }
         }
 
         for burst in [
@@ -148,6 +182,8 @@ impl Demodulator for SoftDemodulator {
                     self.sample - c.age as u64,
                     c.diff
                 );
+                // After any of these frame types you would expect to see a full EOT
+                self.dcd_until(self.sample + 1920 + 1920);
             }
         }
 
