@@ -22,6 +22,9 @@ pub struct SoftTnc {
     /// Latest state of data carrier detect from demodulator - controls whether we can go to TX
     dcd: bool,
 
+    /// If CSMA declined to transmit into an idle slot, at what point do we next check it?
+    next_csma_check: Option<u64>,
+
     /// Current monotonic time, counted in samples
     now: u64,
 
@@ -72,6 +75,7 @@ impl SoftTnc {
             outgoing_kiss: None,
             state: State::Idle,
             dcd: false,
+            next_csma_check: None,
             now: 0,
             packet_queue: Default::default(),
             packet_next: 0,
@@ -224,17 +228,45 @@ impl SoftTnc {
     pub fn read_tx_frame(&mut self) -> Option<ModulatorFrame> {
         match self.state {
             State::Idle | State::RxAcquiringStream(_) | State::RxStream(_) | State::RxPacket(_) => {
-                // We will let CSMA decide whether to actually go ahead.
-                // That's not implemented yet, so let's just check DCD.
-                let channel_free = !self.dcd;
                 let stream_wants_to_tx = self.stream_pending_lsf.is_some();
                 let packet_wants_to_tx = self.packet_full || (self.packet_next != self.packet_curr);
-                if channel_free && stream_wants_to_tx {
-                    self.state = State::TxStream;
-                } else if channel_free && packet_wants_to_tx {
-                    self.state = State::TxPacket;
-                } else {
+                if !stream_wants_to_tx && !packet_wants_to_tx {
                     return None;
+                }
+
+                // We have something we might send if the channel is free
+                match self.next_csma_check {
+                    None => {
+                        if self.dcd {
+                            self.next_csma_check = Some(self.now + 1920);
+                            return None;
+                        } else {
+                            // channel is idle at the moment we get a frame to send
+                            // go right ahead
+                        }
+                    }
+                    Some(at_time) => {
+                        if self.now < at_time {
+                            return None;
+                        }
+                        // 25% chance that we'll transmit this slot.
+                        // Using self.now as random is probably fine so long as it's not being set in
+                        // a lumpy manner. m17app's soundmodem should be fine.
+                        // TODO: bring in prng to help in cases where `now` never ends in 0b11
+                        let p1_4 = (self.now & 3) == 3;
+                        if !self.dcd || !p1_4 {
+                            self.next_csma_check = Some(self.now + 1920);
+                            return None;
+                        } else {
+                            self.next_csma_check = None;
+                        }
+                    }
+                }
+
+                if stream_wants_to_tx {
+                    self.state = State::TxStream;
+                } else {
+                    self.state = State::TxPacket;
                 }
                 self.ptt = true;
                 // TODO: true txdelay

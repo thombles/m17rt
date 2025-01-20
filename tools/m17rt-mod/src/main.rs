@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 pub fn mod_test() {
     let in_path = PathBuf::from("../../../Data/test_vk7xt_8k.wav");
-    //let out_path = PathBuf::from("../../../Data/mymod.rrc");
-    //let output = OutputRrcFile::new(out_path);
-    let output = OutputSoundcard::new();
+    let out_path = PathBuf::from("../../../Data/mymod.rrc");
+    let output = OutputRrcFile::new(out_path);
+    //let output = OutputSoundcard::new();
     let soundmodem = Soundmodem::new(NullInputSource::new(), output, NullPtt::new());
     let app = M17App::new(soundmodem);
     app.start();
