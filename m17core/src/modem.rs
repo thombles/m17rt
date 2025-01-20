@@ -65,9 +65,9 @@ impl Demodulator for SoftDemodulator {
             return None;
         }
 
-        let mut burst_window = [0f32; 71];
-        for i in 0..71 {
-            let c = (self.rx_cursor + i) % 1920;
+        let mut burst_window = [0f32; 8];
+        for i in 0..8 {
+            let c = (self.rx_cursor + (i * 10)) % 1920;
             burst_window[i] = self.rx_win[c];
         }
 

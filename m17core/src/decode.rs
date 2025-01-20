@@ -54,8 +54,8 @@ pub(crate) fn sync_burst_correlation(target: [i8; 8], samples: &[f32]) -> (f32, 
     let mut pos_max: f32 = f32::MIN;
     let mut neg_max: f32 = f32::MAX;
     for i in 0..8 {
-        pos_max = pos_max.max(samples[i * 10]);
-        neg_max = neg_max.min(samples[i * 10]);
+        pos_max = pos_max.max(samples[i]);
+        neg_max = neg_max.min(samples[i]);
     }
     let gain = (pos_max - neg_max) / 2.0;
     let shift = pos_max + neg_max;
@@ -65,7 +65,7 @@ pub(crate) fn sync_burst_correlation(target: [i8; 8], samples: &[f32]) -> (f32, 
 
     let mut diff = 0.0;
     for i in 0..8 {
-        let sym_diff = (((samples[i * 10] - shift) / gain) - target[i] as f32).abs();
+        let sym_diff = (((samples[i] - shift) / gain) - target[i] as f32).abs();
         if sym_diff > SYNC_BIT_THRESHOLD {
             return (f32::MAX, gain, shift);
         }
