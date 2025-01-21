@@ -6,6 +6,9 @@ keywords = ["amateur", "radio", "m17", "ham"]
 license = "MIT"
 authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
 repository = "https://code.octet-stream.net/m17rt"
+description = "M17 digital radio - high level API, integration with sound cards, serial PTT and TCP/IP"
+homepage = "https://octet-stream.net/p/m17rt/"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

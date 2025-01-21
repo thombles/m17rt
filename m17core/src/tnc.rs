@@ -1,5 +1,7 @@
 use crate::address::{Address, Callsign};
-use crate::kiss::{KissBuffer, KissFrame, PORT_PACKET_BASIC, PORT_PACKET_FULL, PORT_STREAM};
+use crate::kiss::{
+    KissBuffer, KissCommand, KissFrame, PORT_PACKET_BASIC, PORT_PACKET_FULL, PORT_STREAM,
+};
 use crate::modem::ModulatorFrame;
 use crate::protocol::{
     Frame, LichCollection, LsfFrame, Mode, PacketFrame, PacketFrameCounter, StreamFrame,
@@ -66,6 +68,12 @@ pub struct SoftTnc {
 
     /// Should PTT be on right now? Polled by external
     ptt: bool,
+
+    /// TxDelay raw value, number of 10ms units. We will optimistically start with default 0.
+    tx_delay: u8,
+
+    /// This is a full duplex channel so we do not need to monitor DCD or use CSMA. Default false.
+    full_duplex: bool,
 }
 
 impl SoftTnc {
@@ -87,6 +95,8 @@ impl SoftTnc {
             stream_curr: 0,
             stream_full: false,
             ptt: false,
+            tx_delay: 0,
+            full_duplex: false,
         }
     }
 
@@ -235,30 +245,36 @@ impl SoftTnc {
                 }
 
                 // We have something we might send if the channel is free
-                match self.next_csma_check {
-                    None => {
-                        if self.dcd {
-                            self.next_csma_check = Some(self.now + 1920);
-                            return None;
-                        } else {
-                            // channel is idle at the moment we get a frame to send
-                            // go right ahead
+
+                // TODO: Proper full duplex support
+                // A true full duplex TNC should be able to rx and tx concurrently, implying
+                // separate states.
+                if !self.full_duplex {
+                    match self.next_csma_check {
+                        None => {
+                            if self.dcd {
+                                self.next_csma_check = Some(self.now + 1920);
+                                return None;
+                            } else {
+                                // channel is idle at the moment we get a frame to send
+                                // go right ahead
+                            }
                         }
-                    }
-                    Some(at_time) => {
-                        if self.now < at_time {
-                            return None;
-                        }
-                        // 25% chance that we'll transmit this slot.
-                        // Using self.now as random is probably fine so long as it's not being set in
-                        // a lumpy manner. m17app's soundmodem should be fine.
-                        // TODO: bring in prng to help in cases where `now` never ends in 0b11
-                        let p1_4 = (self.now & 3) == 3;
-                        if !self.dcd || !p1_4 {
-                            self.next_csma_check = Some(self.now + 1920);
-                            return None;
-                        } else {
-                            self.next_csma_check = None;
+                        Some(at_time) => {
+                            if self.now < at_time {
+                                return None;
+                            }
+                            // 25% chance that we'll transmit this slot.
+                            // Using self.now as random is probably fine so long as it's not being set in
+                            // a lumpy manner. m17app's soundmodem should be fine.
+                            // TODO: bring in prng to help in cases where `now` never ends in 0b11
+                            let p1_4 = (self.now & 3) == 3;
+                            if !self.dcd || !p1_4 {
+                                self.next_csma_check = Some(self.now + 1920);
+                                return None;
+                            } else {
+                                self.next_csma_check = None;
+                            }
                         }
                     }
                 }
@@ -269,8 +285,9 @@ impl SoftTnc {
                     self.state = State::TxPacket;
                 }
                 self.ptt = true;
-                // TODO: true txdelay
-                Some(ModulatorFrame::Preamble { tx_delay: 0 })
+                Some(ModulatorFrame::Preamble {
+                    tx_delay: self.tx_delay,
+                })
             }
             State::TxStream => {
                 if !self.stream_full && self.stream_next == self.stream_curr {
@@ -348,6 +365,31 @@ impl SoftTnc {
             let Ok(port) = kiss_frame.port() else {
                 continue;
             };
+            let Ok(command) = kiss_frame.command() else {
+                continue;
+            };
+            if port != PORT_PACKET_BASIC && port != PORT_PACKET_FULL && port != PORT_STREAM {
+                continue;
+            }
+            if command == KissCommand::TxDelay {
+                let mut new_delay = [0u8; 1];
+                if kiss_frame.decode_payload(&mut new_delay) == Ok(1) {
+                    self.tx_delay = new_delay[0];
+                }
+                continue;
+            }
+            if command == KissCommand::FullDuplex {
+                let mut new_duplex = [0u8; 1];
+                if kiss_frame.decode_payload(&mut new_duplex) == Ok(1) {
+                    self.full_duplex = new_duplex[0] != 0;
+                }
+                continue;
+            }
+            if command != KissCommand::DataFrame {
+                // Not supporting any other settings yet
+                // TODO: allow adjusting P persistence parameter for CSMA
+                continue;
+            }
             if port == PORT_PACKET_BASIC {
                 if self.packet_full {
                     continue;
