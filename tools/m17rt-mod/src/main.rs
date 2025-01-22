@@ -1,4 +1,5 @@
 use m17app::app::M17App;
+use m17app::link_setup::M17Address;
 use m17app::soundmodem::{
     InputRrcFile, InputSoundcard, NullInputSource, NullOutputSink, NullPtt, OutputRrcFile,
     OutputSoundcard, Soundmodem,
@@ -16,7 +17,13 @@ pub fn mod_test() {
     app.start();
     std::thread::sleep(std::time::Duration::from_secs(1));
     println!("Beginning playback...");
-    WavePlayer::play(in_path, app.tx());
+    WavePlayer::play(
+        in_path,
+        app.tx(),
+        &M17Address::from_callsign("VK7XT").unwrap(),
+        &M17Address::new_broadcast(),
+        0,
+    );
     println!("Playback complete, terminating in 5 secs");
     std::thread::sleep(std::time::Duration::from_secs(5));
 }

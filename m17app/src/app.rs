@@ -1,4 +1,5 @@
 use crate::adapter::{PacketAdapter, StreamAdapter};
+use crate::link_setup::LinkSetup;
 use crate::tnc::Tnc;
 use m17core::kiss::{KissBuffer, KissCommand, KissFrame};
 use m17core::protocol::{EncryptionType, LsfFrame, PacketType, StreamFrame};
@@ -83,26 +84,34 @@ pub struct TxHandle {
 }
 
 impl TxHandle {
-    pub fn transmit_packet(&self, packet_type: PacketType, payload: &[u8]) {
-        // hang on where do we get the LSF details from? We need a destination obviously
-        // our source address needs to be configured here too
-        // also there is possible CAN, encryption, meta payload
-
-        // we will immediately convert this into a KISS payload before sending into channel so we only need borrow on data
+    pub fn transmit_packet(
+        &self,
+        link_setup: &LinkSetup,
+        packet_type: &PacketType,
+        payload: &[u8],
+    ) {
+        let (pack_type, pack_type_len) = packet_type.as_proto();
+        if pack_type_len + payload.len() > 823 {
+            // TODO: error for invalid transmission type
+            return;
+        }
+        let mut full_payload = vec![];
+        full_payload.extend_from_slice(&pack_type[0..pack_type_len]);
+        full_payload.extend_from_slice(&payload);
+        let crc = m17core::crc::m17_crc(&full_payload);
+        full_payload.extend_from_slice(&crc.to_be_bytes());
+        let kiss_frame = KissFrame::new_full_packet(&link_setup.raw.0, &full_payload).unwrap();
+        let _ = self.event_tx.send(TncControlEvent::Kiss(kiss_frame));
     }
 
-    // add more methods here for stream outgoing
-
-    pub fn transmit_stream_start(&self, lsf: LsfFrame) {
-        // TODO: is asking for an LsfFrame a good idea or unfriendly API?
-        // What I should do here is create a LinkSetup struct which wraps an LsfFrame and can be loaded with a raw one
-        let kiss_frame = KissFrame::new_stream_setup(&lsf.0).unwrap();
+    pub fn transmit_stream_start(&self, link_setup: &LinkSetup) {
+        let kiss_frame = KissFrame::new_stream_setup(&link_setup.raw.0).unwrap();
         let _ = self.event_tx.send(TncControlEvent::Kiss(kiss_frame));
     }
 
     // as long as there is only one TNC it is implied there is only ever one stream transmission in flight
 
-    pub fn transmit_stream_next(&self, stream: StreamFrame) {
+    pub fn transmit_stream_next(&self, stream: &StreamFrame) {
         let kiss_frame = KissFrame::new_stream_data(&stream).unwrap();
         let _ = self.event_tx.send(TncControlEvent::Kiss(kiss_frame));
     }

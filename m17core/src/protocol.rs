@@ -1,4 +1,7 @@
-use crate::address::{encode_address, Address};
+use crate::{
+    address::{encode_address, Address},
+    bits::BitsMut,
+};
 
 pub(crate) const LSF_SYNC: [i8; 8] = [1, 1, 1, 1, -1, -1, 1, -1];
 pub(crate) const BERT_SYNC: [i8; 8] = [-1, 1, -1, -1, 1, 1, 1, 1];
@@ -209,6 +212,15 @@ impl LsfFrame {
         self.recalculate_crc();
     }
 
+    pub fn set_channel_access_number(&mut self, number: u8) {
+        let mut bits = BitsMut::new(&mut self.0);
+        bits.set_bit(12 * 8 + 5, (number >> 3) & 1);
+        bits.set_bit(12 * 8 + 6, (number >> 2) & 1);
+        bits.set_bit(12 * 8 + 7, (number >> 1) & 1);
+        bits.set_bit(13 * 8 + 0, number & 1);
+        self.recalculate_crc();
+    }
+
     fn recalculate_crc(&mut self) {
         let new_crc = crate::crc::m17_crc(&self.0[0..28]);
         self.0[28..30].copy_from_slice(&new_crc.to_be_bytes());
@@ -293,5 +305,17 @@ impl LichCollection {
 impl Default for LichCollection {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_can() {
+        let mut frame = LsfFrame([0u8; 30]);
+        frame.set_channel_access_number(11);
+        assert_eq!(frame.channel_access_number(), 11);
     }
 }

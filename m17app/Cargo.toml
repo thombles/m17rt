@@ -17,3 +17,4 @@ cpal = "0.15.3"
 m17core = { path = "../m17core" }
 log = "0.4.22"
 serialport = {version = "4.7.0", default-features = false }
+thiserror = "2.0.11"
