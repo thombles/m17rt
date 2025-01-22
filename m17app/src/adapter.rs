@@ -1,22 +1,28 @@
-use crate::app::TxHandle;
-use m17core::protocol::{LsfFrame, PacketType};
+use crate::{app::TxHandle, link_setup::LinkSetup};
+use m17core::protocol::PacketType;
 use std::sync::Arc;
 
 pub trait PacketAdapter: Send + Sync + 'static {
-    fn adapter_registered(&self, id: usize, handle: TxHandle);
-    fn adapter_removed(&self);
-    fn tnc_started(&self);
-    fn tnc_closed(&self);
-    fn packet_received(&self, lsf: LsfFrame, packet_type: PacketType, content: Arc<[u8]>);
+    fn adapter_registered(&self, _id: usize, _handle: TxHandle) {}
+    fn adapter_removed(&self) {}
+    fn tnc_started(&self) {}
+    fn tnc_closed(&self) {}
+    fn packet_received(
+        &self,
+        _link_setup: LinkSetup,
+        _packet_type: PacketType,
+        _content: Arc<[u8]>,
+    ) {
+    }
 }
 
 pub trait StreamAdapter: Send + Sync + 'static {
-    fn adapter_registered(&self, id: usize, handle: TxHandle);
-    fn adapter_removed(&self);
-    fn tnc_started(&self);
-    fn tnc_closed(&self);
-    fn stream_began(&self, lsf: LsfFrame);
-    fn stream_data(&self, frame_number: u16, is_final: bool, data: Arc<[u8; 16]>);
+    fn adapter_registered(&self, _id: usize, _handle: TxHandle) {}
+    fn adapter_removed(&self) {}
+    fn tnc_started(&self) {}
+    fn tnc_closed(&self) {}
+    fn stream_began(&self, _link_setup: LinkSetup) {}
+    fn stream_data(&self, _frame_number: u16, _is_final: bool, _data: Arc<[u8; 16]>) {}
 
     // TODO
     // fn stream_lost(&self);

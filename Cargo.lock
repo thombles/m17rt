@@ -506,6 +506,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "m17rt-rxpacket"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "env_logger",
+ "log",
+ "m17app",
+ "m17core",
+]
+
+[[package]]
+name = "m17rt-txpacket"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "m17app",
+ "m17core",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

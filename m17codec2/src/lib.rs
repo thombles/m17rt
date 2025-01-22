@@ -93,7 +93,7 @@ impl StreamAdapter for Codec2Adapter {
 
     fn tnc_closed(&self) {}
 
-    fn stream_began(&self, _lsf: LsfFrame) {
+    fn stream_began(&self, _link_setup: LinkSetup) {
         // for now we will assume:
         // - unencrypted
         // - data type is Voice (Codec2 3200), not Voice+Data

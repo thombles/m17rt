@@ -17,6 +17,14 @@ impl LinkSetup {
         Self { raw: frame }
     }
 
+    pub fn source(&self) -> M17Address {
+        M17Address(self.raw.source())
+    }
+
+    pub fn destination(&self) -> M17Address {
+        M17Address(self.raw.destination())
+    }
+
     /// Set up an unencrypted voice stream with channel access number 0 and the given source and destination.
     pub fn new_voice(source: &M17Address, destination: &M17Address) -> Self {
         Self {

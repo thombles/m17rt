@@ -117,7 +117,10 @@ impl SoftTnc {
                     Mode::Stream => {
                         let kiss = KissFrame::new_stream_setup(&lsf.0).unwrap();
                         self.kiss_to_host(kiss);
-                        self.state = State::RxStream(RxStreamState { lsf, index: 0 });
+                        self.state = State::RxStream(RxStreamState {
+                            _lsf: lsf,
+                            index: 0,
+                        });
                     }
                 }
             }
@@ -139,7 +142,7 @@ impl SoftTnc {
                                 let start = 25 * rx.count;
                                 let end = start + payload_len;
                                 rx.packet[start..(start + payload_len)]
-                                    .copy_from_slice(&packet.payload);
+                                    .copy_from_slice(&packet.payload[0..payload_len]);
                                 // TODO: compatible packets should be sent on port 0 too
                                 let kiss =
                                     KissFrame::new_full_packet(&rx.lsf.0, &rx.packet[0..end])
@@ -186,7 +189,7 @@ impl SoftTnc {
                                 // TODO: avoid discarding the first data payload here
                                 // need a queue depth of 2 for outgoing kiss
                                 self.state = State::RxStream(RxStreamState {
-                                    lsf,
+                                    _lsf: lsf,
                                     index: stream.frame_number + 1,
                                 });
                             }
@@ -431,7 +434,7 @@ impl SoftTnc {
                 }
                 pending.lsf = Some(lsf);
                 let app_data_len = len - 30;
-                pending.app_data[0..app_data_len].copy_from_slice(&payload[30..]);
+                pending.app_data[0..app_data_len].copy_from_slice(&payload[30..len]);
                 pending.app_data_len = app_data_len;
                 self.packet_queue[self.packet_next] = pending;
                 self.packet_next = (self.packet_next + 1) % 4;
@@ -531,7 +534,7 @@ struct RxAcquiringStreamState {
 
 struct RxStreamState {
     /// Track identifying information for this transmission so we can tell if it changes.
-    lsf: LsfFrame,
+    _lsf: LsfFrame,
 
     /// Expected next frame number. Allowed to skip values on RX, but not go backwards.
     index: u16,
@@ -594,7 +597,7 @@ impl PendingPacket {
             )
         };
         let mut payload = [0u8; 25];
-        payload.copy_from_slice(
+        payload[0..data_len].copy_from_slice(
             &self.app_data[self.app_data_transmitted..(self.app_data_transmitted + data_len)],
         );
         self.app_data_transmitted += data_len;
