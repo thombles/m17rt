@@ -1,31 +1,29 @@
 use m17app::app::M17App;
 use m17app::link_setup::M17Address;
-use m17app::soundmodem::{
-    InputRrcFile, InputSoundcard, NullInputSource, NullOutputSink, NullPtt, OutputRrcFile,
-    OutputSoundcard, Soundmodem,
-};
-use m17codec2::{Codec2Adapter, WavePlayer};
+use m17app::serial::{PttPin, SerialPtt};
+use m17app::soundcard::Soundcard;
+use m17app::soundmodem::Soundmodem;
+use m17codec2::WavePlayer;
 use std::path::PathBuf;
 
 pub fn mod_test() {
-    let in_path = PathBuf::from("../../../Data/test_vk7xt_8k.wav");
-    let out_path = PathBuf::from("../../../Data/mymod.rrc");
-    let output = OutputRrcFile::new(out_path);
-    //let output = OutputSoundcard::new();
-    let soundmodem = Soundmodem::new(NullInputSource::new(), output, NullPtt::new());
+    let soundcard = Soundcard::new("plughw:CARD=Device,DEV=0").unwrap();
+    let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts);
+    let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt);
     let app = M17App::new(soundmodem);
     app.start();
     std::thread::sleep(std::time::Duration::from_secs(1));
     println!("Beginning playback...");
     WavePlayer::play(
-        in_path,
+        PathBuf::from("../../../Data/test_vk7xt_8k.wav"),
         app.tx(),
-        &M17Address::from_callsign("VK7XT").unwrap(),
+        &M17Address::from_callsign("VK7XT-1").unwrap(),
         &M17Address::new_broadcast(),
         0,
     );
-    println!("Playback complete, terminating in 5 secs");
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    println!("Playback complete.");
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    app.close();
 }
 
 fn main() {

@@ -1,0 +1,10 @@
+[package]
+name = "m17rt-soundcards"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
+publish = false
+
+[dependencies]
+m17app = { path = "../../m17app" }

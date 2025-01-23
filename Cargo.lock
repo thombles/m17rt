@@ -517,6 +517,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "m17rt-soundcards"
+version = "0.1.0"
+dependencies = [
+ "m17app",
+]
+
+[[package]]
 name = "m17rt-txpacket"
 version = "0.1.0"
 dependencies = [

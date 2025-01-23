@@ -7,4 +7,10 @@ pub enum M17Error {
 
     #[error("given callsign is {0} characters long; maximum is 9")]
     CallsignTooLong(usize),
+
+    #[error("error during soundcard initialisation")]
+    SoundcardInit,
+
+    #[error("unable to locate sound card '{0}' - is it in use?")]
+    SoundcardNotFound(String),
 }

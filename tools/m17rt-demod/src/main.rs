@@ -1,22 +1,21 @@
 use m17app::app::M17App;
-use m17app::soundmodem::{InputRrcFile, InputSoundcard, NullOutputSink, NullPtt, Soundmodem};
+use m17app::soundcard::Soundcard;
+use m17app::soundmodem::{NullOutputSink, NullPtt, Soundmodem};
 use m17codec2::Codec2Adapter;
-use std::path::PathBuf;
 
-pub fn m17app_test() {
-    //let path = PathBuf::from("../../../Data/test_vk7xt.rrc");
-    let path = PathBuf::from("../../../Data/mymod.rrc");
-    //let path = PathBuf::from("../../../Data/mymod-noisy.raw");
-    let source = InputRrcFile::new(path);
-    //let source = InputSoundcard::new();
-    let soundmodem = Soundmodem::new(source, NullOutputSink::new(), NullPtt::new());
+pub fn demod_test() {
+    let soundcard = Soundcard::new("plughw:CARD=Device,DEV=0").unwrap();
+    let soundmodem = Soundmodem::new(soundcard.input(), NullOutputSink::new(), NullPtt::new());
     let app = M17App::new(soundmodem);
     app.add_stream_adapter(Codec2Adapter::new());
     app.start();
-    std::thread::sleep(std::time::Duration::from_secs(15));
+
+    loop {
+        std::thread::park();
+    }
 }
 
 fn main() {
     env_logger::init();
-    m17app_test();
+    demod_test();
 }

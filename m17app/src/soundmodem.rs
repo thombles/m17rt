@@ -1,8 +1,4 @@
 use crate::tnc::{Tnc, TncError};
-use cpal::traits::DeviceTrait;
-use cpal::traits::HostTrait;
-use cpal::traits::StreamTrait;
-use cpal::{SampleFormat, SampleRate};
 use log::debug;
 use m17core::kiss::MAX_FRAME_LEN;
 use m17core::modem::{Demodulator, Modulator, ModulatorAction, SoftDemodulator, SoftModulator};
@@ -239,72 +235,6 @@ pub trait InputSource: Send + Sync + 'static {
     fn close(&self);
 }
 
-pub struct InputSoundcard {
-    // TODO: allow for inversion both here and in output
-    cpal_name: Option<String>,
-    end_tx: Mutex<Option<Sender<()>>>,
-}
-
-impl InputSoundcard {
-    pub fn new() -> Self {
-        Self {
-            cpal_name: None,
-            end_tx: Mutex::new(None),
-        }
-    }
-
-    pub fn new_with_card(card_name: String) -> Self {
-        Self {
-            cpal_name: Some(card_name),
-            end_tx: Mutex::new(None),
-        }
-    }
-}
-
-impl InputSource for InputSoundcard {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) {
-        let (end_tx, end_rx) = channel();
-        let cpal_name = self.cpal_name.clone();
-        std::thread::spawn(move || {
-            let host = cpal::default_host();
-            let device = if let Some(name) = cpal_name.as_deref() {
-                host.input_devices()
-                    .unwrap()
-                    .find(|d| d.name().unwrap() == name)
-                    .unwrap()
-            } else {
-                host.default_input_device().unwrap()
-            };
-            let mut configs = device.supported_input_configs().unwrap();
-            let config = configs
-                .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
-                .unwrap()
-                .with_sample_rate(SampleRate(48000));
-            let stream = device
-                .build_input_stream(
-                    &config.into(),
-                    move |data: &[i16], _info: &cpal::InputCallbackInfo| {
-                        let out: Vec<i16> = data.iter().map(|s| *s).collect();
-                        let _ = samples.try_send(SoundmodemEvent::BasebandInput(out.into()));
-                    },
-                    |e| {
-                        // TODO: abort?
-                        debug!("error occurred in soundcard input: {e:?}");
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let _ = end_rx.recv();
-        });
-        *self.end_tx.lock().unwrap() = Some(end_tx);
-    }
-
-    fn close(&self) {
-        let _ = self.end_tx.lock().unwrap().take();
-    }
-}
-
 pub struct InputRrcFile {
     path: PathBuf,
     end_tx: Mutex<Option<Sender<()>>>,
@@ -407,10 +337,10 @@ impl InputSource for NullInputSource {
 }
 
 pub struct OutputBuffer {
-    idling: bool,
+    pub idling: bool,
     // TODO: something more efficient
-    samples: VecDeque<i16>,
-    latency: Duration,
+    pub samples: VecDeque<i16>,
+    pub latency: Duration,
 }
 
 impl OutputBuffer {
@@ -544,96 +474,6 @@ impl OutputSink for NullOutputSink {
                     timestamp: Instant::now(),
                 });
             }
-        });
-        *self.end_tx.lock().unwrap() = Some(end_tx);
-    }
-
-    fn close(&self) {
-        let _ = self.end_tx.lock().unwrap().take();
-    }
-}
-
-pub struct OutputSoundcard {
-    // TODO: allow for inversion both here and in output
-    cpal_name: Option<String>,
-    end_tx: Mutex<Option<Sender<()>>>,
-}
-
-impl OutputSoundcard {
-    pub fn new() -> Self {
-        Self {
-            cpal_name: None,
-            end_tx: Mutex::new(None),
-        }
-    }
-
-    pub fn new_with_card(card_name: String) -> Self {
-        Self {
-            cpal_name: Some(card_name),
-            end_tx: Mutex::new(None),
-        }
-    }
-}
-
-impl OutputSink for OutputSoundcard {
-    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>) {
-        let (end_tx, end_rx) = channel();
-        let cpal_name = self.cpal_name.clone();
-        std::thread::spawn(move || {
-            let host = cpal::default_host();
-            let device = if let Some(name) = cpal_name.as_deref() {
-                host.output_devices()
-                    .unwrap()
-                    .find(|d| d.name().unwrap() == name)
-                    .unwrap()
-            } else {
-                host.default_output_device().unwrap()
-            };
-            let mut configs = device.supported_output_configs().unwrap();
-            // TODO: more error handling
-            let config = configs
-                .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
-                .unwrap()
-                .with_sample_rate(SampleRate(48000));
-            let stream = device
-                .build_output_stream(
-                    &config.into(),
-                    move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
-                        let mut taken = 0;
-                        let ts = info.timestamp();
-                        let latency = ts
-                            .playback
-                            .duration_since(&ts.callback)
-                            .unwrap_or(Duration::ZERO);
-                        let mut buffer = buffer.write().unwrap();
-                        buffer.latency = latency;
-                        for out in data.iter_mut() {
-                            if let Some(s) = buffer.samples.pop_front() {
-                                *out = s;
-                                taken += 1;
-                            } else if buffer.idling {
-                                *out = 0;
-                            } else {
-                                debug!("output soundcard had underrun");
-                                let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
-                                break;
-                            }
-                        }
-                        //debug!("latency is {} ms, taken {taken}", latency.as_millis());
-                        let _ = event_tx.send(SoundmodemEvent::DidReadFromOutputBuffer {
-                            len: taken,
-                            timestamp: Instant::now(),
-                        });
-                    },
-                    |e| {
-                        // TODO: abort?
-                        debug!("error occurred in soundcard output: {e:?}");
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let _ = end_rx.recv();
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
     }

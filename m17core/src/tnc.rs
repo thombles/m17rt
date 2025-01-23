@@ -102,6 +102,10 @@ impl SoftTnc {
 
     /// Process an individual `Frame` that has been decoded by the modem.
     pub fn handle_frame(&mut self, frame: Frame) {
+        if self.ptt {
+            // Ignore self-decodes
+            return;
+        }
         match frame {
             Frame::Lsf(lsf) => {
                 // A new LSF implies a clean slate.
