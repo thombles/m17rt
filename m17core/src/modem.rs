@@ -503,6 +503,12 @@ impl Modulator for SoftModulator {
     }
 }
 
+impl Default for SoftModulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct DecodeCandidate {
     burst: SyncBurst,

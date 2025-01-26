@@ -170,12 +170,12 @@ impl LsfFrame {
     }
 
     pub fn set_destination(&mut self, destination: &Address) {
-        self.0[0..6].copy_from_slice(&encode_address(&destination));
+        self.0[0..6].copy_from_slice(&encode_address(destination));
         self.recalculate_crc();
     }
 
     pub fn set_source(&mut self, source: &Address) {
-        self.0[6..12].copy_from_slice(&encode_address(&source));
+        self.0[6..12].copy_from_slice(&encode_address(source));
         self.recalculate_crc();
     }
 
@@ -217,7 +217,7 @@ impl LsfFrame {
         bits.set_bit(12 * 8 + 5, (number >> 3) & 1);
         bits.set_bit(12 * 8 + 6, (number >> 2) & 1);
         bits.set_bit(12 * 8 + 7, (number >> 1) & 1);
-        bits.set_bit(13 * 8 + 0, number & 1);
+        bits.set_bit(13 * 8, number & 1);
         self.recalculate_crc();
     }
 

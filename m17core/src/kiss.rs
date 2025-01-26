@@ -215,15 +215,13 @@ impl KissFrame {
             .iter()
             .enumerate()
             .skip_while(|(_, b)| **b == FEND)
-            .skip(1)
-            .next()
+            .nth(1)
             .ok_or(KissError::MalformedKissFrame)?
             .0;
         let end = self.data[start..]
             .iter()
             .enumerate()
-            .skip_while(|(_, b)| **b != FEND)
-            .next()
+            .find(|(_, b)| **b == FEND)
             .ok_or(KissError::MalformedKissFrame)?
             .0
             + start;
@@ -237,13 +235,11 @@ impl KissFrame {
 
     /// Return the header byte of the KISS frame, skipping over 0 or more prepended FENDs.
     fn header_byte(&self) -> Result<u8, KissError> {
-        Ok(self
-            .data
+        self.data
             .iter()
-            .skip_while(|b| **b == FEND)
-            .next()
+            .find(|b| **b != FEND)
             .cloned()
-            .ok_or(KissError::MalformedKissFrame)?)
+            .ok_or(KissError::MalformedKissFrame)
     }
 }
 
@@ -390,6 +386,12 @@ impl KissBuffer {
             self.frame.data[i - idx] = self.frame.data[i];
         }
         self.written -= idx;
+    }
+}
+
+impl Default for KissBuffer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

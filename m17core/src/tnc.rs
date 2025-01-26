@@ -217,14 +217,11 @@ impl SoftTnc {
 
     pub fn set_now(&mut self, now_samples: u64) {
         self.now = now_samples;
-        match self.state {
-            State::TxEndingAtTime(time) => {
-                if now_samples >= time {
-                    self.ptt = false;
-                    self.state = State::Idle;
-                }
+        if let State::TxEndingAtTime(time) = self.state {
+            if now_samples >= time {
+                self.ptt = false;
+                self.state = State::Idle;
             }
-            _ => (),
         }
     }
 
@@ -234,11 +231,8 @@ impl SoftTnc {
 
     pub fn set_tx_end_time(&mut self, in_samples: usize) {
         log::debug!("tnc has been told that tx will complete in {in_samples} samples");
-        match self.state {
-            State::TxEnding => {
-                self.state = State::TxEndingAtTime(self.now + in_samples as u64);
-            }
-            _ => (),
+        if let State::TxEnding = self.state {
+            self.state = State::TxEndingAtTime(self.now + in_samples as u64);
         }
     }
 
@@ -411,7 +405,7 @@ impl SoftTnc {
                 pending.app_data[len..len + 2].copy_from_slice(&packet_crc.to_be_bytes());
                 pending.app_data_len = len + 2;
                 pending.lsf = Some(LsfFrame::new_packet(
-                    &Address::Callsign(Callsign(b"M17RT-PKT".clone())),
+                    &Address::Callsign(Callsign(*b"M17RT-PKT")),
                     &Address::Broadcast,
                 ));
                 self.packet_queue[self.packet_next] = pending;
@@ -488,6 +482,12 @@ impl SoftTnc {
             kiss_frame,
             sent: 0,
         });
+    }
+}
+
+impl Default for SoftTnc {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
