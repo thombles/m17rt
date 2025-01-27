@@ -277,7 +277,7 @@ impl InputSource for InputRrcFile {
                     if let Err(e) = samples.try_send(SoundmodemEvent::BasebandInput(buf.into())) {
                         debug!("overflow feeding soundmodem: {e:?}");
                     }
-                    next_tick = next_tick + TICK;
+                    next_tick += TICK;
                     idx = 0;
                     std::thread::sleep(next_tick.duration_since(Instant::now()));
                 }
@@ -317,7 +317,7 @@ impl InputSource for NullInputSource {
 
             loop {
                 std::thread::sleep(next_tick.duration_since(Instant::now()));
-                next_tick = next_tick + TICK;
+                next_tick += TICK;
                 if end_rx.try_recv() != Err(TryRecvError::Empty) {
                     break;
                 }
@@ -336,6 +336,12 @@ impl InputSource for NullInputSource {
     }
 }
 
+impl Default for NullInputSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct OutputBuffer {
     pub idling: bool,
     // TODO: something more efficient
@@ -350,6 +356,12 @@ impl OutputBuffer {
             samples: VecDeque::new(),
             latency: Duration::ZERO,
         }
+    }
+}
+
+impl Default for OutputBuffer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -390,7 +402,7 @@ impl OutputSink for OutputRrcFile {
 
             loop {
                 std::thread::sleep(next_tick.duration_since(Instant::now()));
-                next_tick = next_tick + TICK;
+                next_tick += TICK;
                 if end_rx.try_recv() != Err(TryRecvError::Empty) {
                     break;
                 }
@@ -440,6 +452,12 @@ impl NullOutputSink {
     }
 }
 
+impl Default for NullOutputSink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutputSink for NullOutputSink {
     fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>) {
         let (end_tx, end_rx) = channel();
@@ -451,7 +469,7 @@ impl OutputSink for NullOutputSink {
 
             loop {
                 std::thread::sleep(next_tick.duration_since(Instant::now()));
-                next_tick = next_tick + TICK;
+                next_tick += TICK;
                 if end_rx.try_recv() != Err(TryRecvError::Empty) {
                     break;
                 }
@@ -459,7 +477,7 @@ impl OutputSink for NullOutputSink {
                 let mut buffer = buffer.write().unwrap();
                 let mut taken = 0;
                 for _ in 0..SAMPLES_PER_TICK {
-                    if !buffer.samples.pop_front().is_some() {
+                    if buffer.samples.pop_front().is_none() {
                         if !buffer.idling {
                             debug!("null output had underrun");
                             let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
@@ -494,6 +512,12 @@ pub struct NullPtt;
 impl NullPtt {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for NullPtt {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

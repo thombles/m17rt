@@ -63,10 +63,7 @@ impl Soundcard {
                 continue;
             };
             if configs
-                .find(|config| {
-                    config.channels() == 1 && config.sample_format() == SampleFormat::I16
-                })
-                .is_some()
+                .any(|config| config.channels() == 1 && config.sample_format() == SampleFormat::I16)
             {
                 let Ok(name) = d.name() else {
                     continue;
@@ -89,10 +86,7 @@ impl Soundcard {
                 continue;
             };
             if configs
-                .find(|config| {
-                    config.channels() == 1 && config.sample_format() == SampleFormat::I16
-                })
-                .is_some()
+                .any(|config| config.channels() == 1 && config.sample_format() == SampleFormat::I16)
             {
                 let Ok(name) = d.name() else {
                     continue;

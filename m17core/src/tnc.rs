@@ -502,6 +502,7 @@ struct OutgoingKiss {
     sent: usize,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum State {
     /// Nothing happening. We may have TX data queued but we won't act on it until CSMA opens up.
     Idle,

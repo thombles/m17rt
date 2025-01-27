@@ -61,6 +61,12 @@ impl Codec2Adapter {
     }
 }
 
+impl Default for Codec2Adapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct AdapterState {
     tx: Option<TxHandle>,
     /// Circular buffer of output samples for playback
@@ -183,8 +189,8 @@ impl WavePlayer {
 
         loop {
             let mut last_one = false;
-            for mut out in out_buf.chunks_mut(8) {
-                for i in 0..160 {
+            for out in out_buf.chunks_mut(8) {
+                for i in in_buf.iter_mut() {
                     let sample = match samples.next() {
                         Some(Ok(sample)) => sample,
                         _ => {
@@ -192,16 +198,16 @@ impl WavePlayer {
                             0
                         }
                     };
-                    in_buf[i] = sample;
+                    *i = sample;
                 }
-                codec.encode(&mut out, &in_buf);
+                codec.encode(out, &in_buf);
             }
             tx.transmit_stream_next(&StreamFrame {
                 lich_idx: lsf_chunk as u8,
                 lich_part: setup.lich_part(lsf_chunk as u8),
                 frame_number,
                 end_of_stream: last_one,
-                stream_data: out_buf.clone(),
+                stream_data: out_buf,
             });
             frame_number += 1;
             lsf_chunk = (lsf_chunk + 1) % 6;

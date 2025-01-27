@@ -92,7 +92,7 @@ impl TxHandle {
         }
         let mut full_payload = vec![];
         full_payload.extend_from_slice(&pack_type[0..pack_type_len]);
-        full_payload.extend_from_slice(&payload);
+        full_payload.extend_from_slice(payload);
         let crc = m17core::crc::m17_crc(&full_payload);
         full_payload.extend_from_slice(&crc.to_be_bytes());
         let kiss_frame = KissFrame::new_full_packet(&link_setup.raw.0, &full_payload).unwrap();
@@ -107,7 +107,7 @@ impl TxHandle {
     // as long as there is only one TNC it is implied there is only ever one stream transmission in flight
 
     pub fn transmit_stream_next(&self, stream: &StreamFrame) {
-        let kiss_frame = KissFrame::new_stream_data(&stream).unwrap();
+        let kiss_frame = KissFrame::new_stream_data(stream).unwrap();
         let _ = self.event_tx.send(TncControlEvent::Kiss(kiss_frame));
     }
 }
@@ -133,6 +133,7 @@ impl Adapters {
 }
 
 /// Carries a request from a method on M17App to the TNC's writer thread, which will execute it.
+#[allow(clippy::large_enum_variant)]
 enum TncControlEvent {
     Kiss(KissFrame),
     Start,
@@ -144,8 +145,8 @@ fn spawn_reader<T: Tnc>(mut tnc: T, adapters: Arc<RwLock<Adapters>>) {
         let mut kiss_buffer = KissBuffer::new();
         let mut stream_running = false;
         loop {
-            let mut buf = kiss_buffer.buf_remaining();
-            let n = match tnc.read(&mut buf) {
+            let buf = kiss_buffer.buf_remaining();
+            let n = match tnc.read(buf) {
                 Ok(n) => n,
                 Err(_) => break,
             };
@@ -200,7 +201,7 @@ fn spawn_reader<T: Tnc>(mut tnc: T, adapters: Arc<RwLock<Adapters>>) {
                         for s in subs {
                             s.packet_received(
                                 LinkSetup::new_raw(lsf.clone()),
-                                packet_type.clone(),
+                                packet_type,
                                 packet_payload.clone(),
                             );
                         }
@@ -260,7 +261,7 @@ fn spawn_writer<T: Tnc>(mut tnc: T, event_rx: mpsc::Receiver<TncControlEvent>) {
         while let Ok(ev) = event_rx.recv() {
             match ev {
                 TncControlEvent::Kiss(k) => {
-                    if let Err(e) = tnc.write_all(&k.as_bytes()) {
+                    if let Err(e) = tnc.write_all(k.as_bytes()) {
                         debug!("kiss send err: {:?}", e);
                         return;
                     }

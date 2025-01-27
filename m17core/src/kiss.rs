@@ -543,7 +543,7 @@ mod tests {
     fn test_buffer_double() {
         let mut buffer = KissBuffer::new();
         let buf = buffer.buf_remaining();
-        buf[0..8].copy_from_slice(&[FEND, 0x10, 0x01, FEND, FEND, 0x20, 02, FEND]);
+        buf[0..8].copy_from_slice(&[FEND, 0x10, 0x01, FEND, FEND, 0x20, 0x02, FEND]);
         buffer.did_write(8);
 
         let next = buffer.next_frame().unwrap();
@@ -557,7 +557,7 @@ mod tests {
     fn test_buffer_double_shared_fend() {
         let mut buffer = KissBuffer::new();
         let buf = buffer.buf_remaining();
-        buf[0..7].copy_from_slice(&[FEND, 0x10, 0x01, FEND, 0x20, 02, FEND]);
+        buf[0..7].copy_from_slice(&[FEND, 0x10, 0x01, FEND, 0x20, 0x02, FEND]);
         buffer.did_write(7);
 
         let next = buffer.next_frame().unwrap();
@@ -571,7 +571,7 @@ mod tests {
     fn test_buffer_extra_fend() {
         let mut buffer = KissBuffer::new();
         let buf = buffer.buf_remaining();
-        buf[0..10].copy_from_slice(&[FEND, FEND, FEND, 0x10, 0x01, FEND, FEND, 0x20, 02, FEND]);
+        buf[0..10].copy_from_slice(&[FEND, FEND, FEND, 0x10, 0x01, FEND, FEND, 0x20, 0x02, FEND]);
         buffer.did_write(10);
 
         let next = buffer.next_frame().unwrap();
