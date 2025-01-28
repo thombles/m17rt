@@ -13,4 +13,7 @@ pub enum M17Error {
 
     #[error("unable to locate sound card '{0}' - is it in use?")]
     SoundcardNotFound(String),
+
+    #[error("unable to set up RTL-SDR receiver")]
+    RtlSdrInit,
 }
