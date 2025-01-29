@@ -138,8 +138,12 @@ fn spawn_soundmodem_worker(
         let mut ptt = false;
         while let Ok(ev) = event_rx.recv() {
             // Update clock on TNC before we do anything
-            let sample_time = (start.elapsed().as_nanos() / 48000) as u64;
-            tnc.set_now(sample_time);
+            let sample_time = start.elapsed();
+            let secs = sample_time.as_secs();
+            let nanos = sample_time.subsec_nanos();
+            // Accurate to within approx 1 sample
+            let now_samples = 48000 * secs + (nanos as u64 / 20833);
+            tnc.set_now(now_samples);
 
             // Handle event
             match ev {

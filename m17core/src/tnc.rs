@@ -217,6 +217,8 @@ impl SoftTnc {
 
     pub fn set_now(&mut self, now_samples: u64) {
         self.now = now_samples;
+        // TODO: expose this to higher layer so we can schedule a precise delay
+        // rather than waiting for some soundcard I/O event
         if let State::TxEndingAtTime(time) = self.state {
             if now_samples >= time {
                 self.ptt = false;

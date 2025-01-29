@@ -1,8 +1,9 @@
 use crate::adapter::{PacketAdapter, StreamAdapter};
 use crate::link_setup::LinkSetup;
 use crate::tnc::Tnc;
+use crate::{LsfFrame, PacketType, StreamFrame};
 use m17core::kiss::{KissBuffer, KissCommand, KissFrame};
-use m17core::protocol::{EncryptionType, LsfFrame, PacketType, StreamFrame};
+use m17core::protocol::EncryptionType;
 
 use log::debug;
 use std::collections::HashMap;

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![allow(clippy::needless_range_loop)]
 #![cfg_attr(not(test), no_std)]
 

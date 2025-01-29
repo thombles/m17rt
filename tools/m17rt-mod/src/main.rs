@@ -28,6 +28,8 @@ pub fn mod_test() {
 }
 
 fn main() {
-    env_logger::init();
+    env_logger::builder()
+        .format_timestamp(Some(env_logger::TimestampPrecision::Millis))
+        .init();
     mod_test();
 }

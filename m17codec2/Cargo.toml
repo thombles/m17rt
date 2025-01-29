@@ -16,7 +16,7 @@ readme = "README.md"
 codec2 = "0.3.0"
 cpal = "0.15.3"
 hound = "3.5.1"
-m17core = { path = "../m17core" }
-m17app = { path = "../m17app" }
+m17core = { version = "0.1", path = "../m17core" }
+m17app = { version = "0.1", path = "../m17app" }
 log = "0.4.22"
 

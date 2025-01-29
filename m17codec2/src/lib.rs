@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use codec2::{Codec2, Codec2Mode};
 use cpal::traits::DeviceTrait;
 use cpal::traits::HostTrait;
@@ -40,6 +42,7 @@ pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
     all_samples
 }
 
+/// Subscribes to M17 streams and attempts to play the decoded Codec2
 pub struct Codec2Adapter {
     state: Arc<Mutex<AdapterState>>,
     // TODO: make this configurable
@@ -162,9 +165,17 @@ fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card
     // it seems concrete impls of Stream have a Drop implementation that will handle termination
 }
 
+/// Transmits a wave file as an M17 stream
 pub struct WavePlayer;
 
 impl WavePlayer {
+    /// Plays a wave file (blocking).
+    ///
+    /// * `path`: wave file to transmit, must be 8 kHz mono and 16-bit LE
+    /// * `tx`: a `TxHandle` obtained from an `M17App`
+    /// * `source`: address of transmission source
+    /// * `destination`: address of transmission destination
+    /// * `channel_access_number`: from 0 to 15, usually 0
     pub fn play(
         path: PathBuf,
         tx: TxHandle,

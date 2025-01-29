@@ -26,7 +26,9 @@ impl SerialPtt {
     pub fn new(port_name: &str, pin: PttPin) -> Self {
         // TODO: error handling
         let port = serialport::new(port_name, 9600).open().unwrap();
-        Self { port, pin }
+        let mut s = Self { port, pin };
+        s.ptt_off();
+        s
     }
 }
 

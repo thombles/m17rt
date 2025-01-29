@@ -1,21 +1,12 @@
 use std::{
     io::Read,
     process::{Child, Command, Stdio},
-    sync::{
-        mpsc::{sync_channel, Receiver, SyncSender},
-        Arc, Mutex, RwLock,
-    },
-    time::{Duration, Instant},
-};
-
-use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
-    SampleFormat, SampleRate, Stream,
+    sync::{mpsc::SyncSender, Mutex},
 };
 
 use crate::{
     error::M17Error,
-    soundmodem::{InputSource, OutputBuffer, OutputSink, SoundmodemEvent},
+    soundmodem::{InputSource, SoundmodemEvent},
 };
 
 pub struct RtlSdr {
@@ -80,6 +71,7 @@ impl InputSource for RtlSdr {
                 }
             }
         });
+        *self.rtlfm.lock().unwrap() = Some(cmd);
     }
 
     fn close(&self) {

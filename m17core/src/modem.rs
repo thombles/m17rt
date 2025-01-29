@@ -333,6 +333,7 @@ impl SoftModulator {
             next_len: 0,
             next_read: 0,
             tx_delay_padding: 0,
+            // TODO: actually set this to false when we are worried about underrun
             update_idle: true,
             idle: true,
             calculate_tx_end: false,
@@ -384,7 +385,6 @@ impl Modulator for SoftModulator {
         capacity: usize,
         output_latency: usize,
     ) {
-        //log::debug!("modulator update_output_buffer {samples_to_play} {capacity} {output_latency}");
         self.output_latency = output_latency;
         self.buf_capacity = capacity;
         self.samples_in_buf = samples_to_play;
@@ -412,12 +412,9 @@ impl Modulator for SoftModulator {
             ModulatorFrame::Preamble { tx_delay } => {
                 // TODO: Stop assuming 48 kHz everywhere. 24 kHz should be fine too.
                 let tx_delay_samples = tx_delay as usize * 480;
-                // TxDelay and output latency have the same effect - account for whichever is bigger.
-                // We want our sound card DAC hitting preamble right when PTT fully engages.
-                // The modulator calls the shots here - TNC hands over Preamble and asserts PTT, then
-                // waits to be told when transmission will be complete. This estimate will not be
-                // made and delivered until we generate the EOT frame.
-                self.tx_delay_padding = tx_delay_samples.max(self.output_latency);
+                // Our output latency gives us a certain amount of unavoidable TxDelay
+                // So only introduce artificial delay if the requested TxDelay exceeds that
+                self.tx_delay_padding = tx_delay_samples.saturating_sub(self.output_latency);
 
                 // We should be starting from a filter_win of zeroes
                 // Transmission is effectively smeared by 80 taps and we'll capture that in EOT
