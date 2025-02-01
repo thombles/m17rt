@@ -10,5 +10,8 @@ pub mod soundcard;
 pub mod soundmodem;
 pub mod tnc;
 
+#[cfg(test)]
+mod test_util;
+
 // Protocol definitions needed to implement stream and packet adapters or create fully custom LSFs
 pub use m17core::protocol::{LsfFrame, PacketType, StreamFrame};

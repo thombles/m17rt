@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq, Clone)]
 pub enum M17Error {
     #[error("given callsign contains at least one character invalid in M17: {0}")]
     InvalidCallsignCharacters(char),
@@ -16,4 +16,9 @@ pub enum M17Error {
 
     #[error("unable to set up RTL-SDR receiver")]
     RtlSdrInit,
+
+    #[error(
+        "provided packet payload is too large: provided {provided} bytes, capacity {capacity}"
+    )]
+    PacketTooLarge { provided: usize, capacity: usize },
 }

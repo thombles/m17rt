@@ -20,7 +20,8 @@ fn main() {
     let link_setup = LinkSetup::new_packet(&source, &destination);
     let payload = b"Hello, world!";
     app.tx()
-        .transmit_packet(&link_setup, PacketType::Sms, payload);
+        .transmit_packet(&link_setup, PacketType::Sms, payload)
+        .unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
     app.close();
