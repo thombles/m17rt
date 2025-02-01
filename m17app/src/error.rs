@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq, Clone)]
@@ -21,4 +23,10 @@ pub enum M17Error {
         "provided packet payload is too large: provided {provided} bytes, capacity {capacity}"
     )]
     PacketTooLarge { provided: usize, capacity: usize },
+
+    #[error("provided path to RRC file could not be opened: {0}")]
+    InvalidRrcPath(PathBuf),
+
+    #[error("failed to read from RRC file: {0}")]
+    RrcReadFailed(PathBuf),
 }

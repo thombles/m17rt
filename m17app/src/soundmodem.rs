@@ -1,3 +1,4 @@
+use crate::error::M17Error;
 use crate::tnc::{Tnc, TncError};
 use log::debug;
 use m17core::kiss::MAX_FRAME_LEN;
@@ -240,29 +241,28 @@ pub trait InputSource: Send + Sync + 'static {
 }
 
 pub struct InputRrcFile {
-    path: PathBuf,
+    baseband: Arc<[u8]>,
     end_tx: Mutex<Option<Sender<()>>>,
 }
 
 impl InputRrcFile {
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
+    pub fn new(path: PathBuf) -> Result<Self, M17Error> {
+        let mut file = File::open(&path).map_err(|_| M17Error::InvalidRrcPath(path.clone()))?;
+        let mut baseband = vec![];
+        file.read_to_end(&mut baseband)
+            .map_err(|_| M17Error::RrcReadFailed(path))?;
+        Ok(Self {
+            baseband: baseband.into(),
             end_tx: Mutex::new(None),
-        }
+        })
     }
 }
 
 impl InputSource for InputRrcFile {
     fn start(&self, samples: SyncSender<SoundmodemEvent>) {
         let (end_tx, end_rx) = channel();
-        let path = self.path.clone();
+        let baseband = self.baseband.clone();
         std::thread::spawn(move || {
-            // TODO: error handling
-            let mut file = File::open(path).unwrap();
-            let mut baseband = vec![];
-            file.read_to_end(&mut baseband).unwrap();
-
             // assuming 48 kHz for now
             const TICK: Duration = Duration::from_millis(25);
             const SAMPLES_PER_TICK: usize = 1200;
