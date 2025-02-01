@@ -1,4 +1,4 @@
-# m17codec2
+# m17core
 
 Part of the [M17 Rust Toolkit](https://octet-stream.net/p/m17rt/).
 
