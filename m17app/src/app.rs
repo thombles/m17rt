@@ -71,10 +71,28 @@ impl M17App {
     }
 
     pub fn start(&self) {
+        {
+            let adapters = self.adapters.read().unwrap();
+            for (_, p) in &adapters.packet {
+                p.tnc_started();
+            }
+            for (_, s) in &adapters.stream {
+                s.tnc_started();
+            }
+        }
         let _ = self.event_tx.send(TncControlEvent::Start);
     }
 
     pub fn close(&self) {
+        {
+            let adapters = self.adapters.read().unwrap();
+            for (_, p) in &adapters.packet {
+                p.tnc_closed();
+            }
+            for (_, s) in &adapters.stream {
+                s.tnc_closed();
+            }
+        }
         // TODO: blocking function to indicate TNC has finished closing
         // then we could call this in a signal handler to ensure PTT is dropped before quit
         let _ = self.event_tx.send(TncControlEvent::Close);
@@ -320,5 +338,66 @@ mod tests {
                 capacity: 822
             })
         );
+    }
+
+    #[test]
+    fn adapter_lifecycle() {
+        #[derive(Debug, PartialEq)]
+        enum Event {
+            Registered(usize),
+            Removed,
+            Started,
+            Closed,
+        }
+        macro_rules! event_impl {
+            ($target:ty, $trait:ty) => {
+                impl $trait for $target {
+                    fn adapter_registered(&self, id: usize, _handle: TxHandle) {
+                        self.0.send(Event::Registered(id)).unwrap();
+                    }
+
+                    fn adapter_removed(&self) {
+                        self.0.send(Event::Removed).unwrap();
+                    }
+
+                    fn tnc_started(&self) {
+                        self.0.send(Event::Started).unwrap();
+                    }
+
+                    fn tnc_closed(&self) {
+                        self.0.send(Event::Closed).unwrap();
+                    }
+                }
+            };
+        }
+        struct FakePacket(mpsc::SyncSender<Event>);
+        struct FakeStream(mpsc::SyncSender<Event>);
+        event_impl!(FakePacket, PacketAdapter);
+        event_impl!(FakeStream, StreamAdapter);
+
+        let app = M17App::new(NullTnc);
+        let (tx_p, rx_p) = mpsc::sync_channel(128);
+        let (tx_s, rx_s) = mpsc::sync_channel(128);
+        let packet = FakePacket(tx_p);
+        let stream = FakeStream(tx_s);
+
+        let id_p = app.add_packet_adapter(packet);
+        let id_s = app.add_stream_adapter(stream);
+        app.start();
+        app.close();
+        app.remove_packet_adapter(id_p);
+        app.remove_stream_adapter(id_s);
+
+        assert_eq!(rx_p.try_recv(), Ok(Event::Registered(0)));
+        assert_eq!(rx_p.try_recv(), Ok(Event::Started));
+        assert_eq!(rx_p.try_recv(), Ok(Event::Closed));
+        assert_eq!(rx_p.try_recv(), Ok(Event::Removed));
+        assert_eq!(rx_p.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+
+        assert_eq!(rx_s.try_recv(), Ok(Event::Registered(1)));
+        assert_eq!(rx_s.try_recv(), Ok(Event::Started));
+        assert_eq!(rx_s.try_recv(), Ok(Event::Closed));
+        assert_eq!(rx_s.try_recv(), Ok(Event::Removed));
+        assert_eq!(rx_s.try_recv(), Err(mpsc::TryRecvError::Disconnected));
     }
 }
