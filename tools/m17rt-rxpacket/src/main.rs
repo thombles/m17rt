@@ -10,8 +10,8 @@ fn main() {
     let soundcard = Soundcard::new("plughw:CARD=Device,DEV=0").unwrap();
     let soundmodem = Soundmodem::new(soundcard.input(), NullOutputSink::new(), NullPtt::new());
     let app = M17App::new(soundmodem);
-    app.add_packet_adapter(PacketPrinter);
-    app.start();
+    app.add_packet_adapter(PacketPrinter).unwrap();
+    app.start().unwrap();
 
     loop {
         std::thread::park();

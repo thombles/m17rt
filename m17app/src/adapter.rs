@@ -1,4 +1,4 @@
-use crate::{app::TxHandle, link_setup::LinkSetup};
+use crate::{app::TxHandle, error::AdapterError, link_setup::LinkSetup};
 use m17core::protocol::PacketType;
 use std::sync::Arc;
 
@@ -9,20 +9,17 @@ use std::sync::Arc;
 /// a `TxHandle` when the adapter is first added to the app. This means the adapter can transmit as
 /// well as receive.
 pub trait PacketAdapter: Send + Sync + 'static {
-    /// This adapter was added to an `M17App`.
-    fn adapter_registered(&self, id: usize, handle: TxHandle) {
-        let _ = id;
+    /// TNC is online. New packets may now be received and it is okay to transmit.
+    fn start(&self, handle: TxHandle) -> Result<(), AdapterError> {
         let _ = handle;
+        Ok(())
     }
 
-    /// This adapter was removed from an `M17App`.
-    fn adapter_removed(&self) {}
-
-    /// The TNC has been started and incoming packets may now arrive.
-    fn tnc_started(&self) {}
-
-    /// The TNC has been shut down. There will be no more tx/rx.
-    fn tnc_closed(&self) {}
+    /// This adapter or the whole TNC has been shut down. There will be no more tx/rx. This is a
+    /// permanent operation.
+    fn close(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
 
     /// A packet has been received and assembled by the radio.
     fn packet_received(&self, link_setup: LinkSetup, packet_type: PacketType, content: Arc<[u8]>) {
@@ -40,20 +37,17 @@ pub trait PacketAdapter: Send + Sync + 'static {
 /// There are also some lifecycle callbacks, one of which will provide a `TxHandle` when the adapter
 /// is first added to the app. This means the adapter can transmit as well as receive.
 pub trait StreamAdapter: Send + Sync + 'static {
-    /// This adapter was added to an `M17App`.
-    fn adapter_registered(&self, id: usize, handle: TxHandle) {
-        let _ = id;
+    /// TNC is online. New streams may now be received and it is okay to transmit.
+    fn start(&self, handle: TxHandle) -> Result<(), AdapterError> {
         let _ = handle;
+        Ok(())
     }
 
-    /// This adapter was removed from an `M17App`.
-    fn adapter_removed(&self) {}
-
-    /// The TNC has been started and incoming streams may now arrive.
-    fn tnc_started(&self) {}
-
-    /// The TNC has been shut down. There will be no more tx/rx.
-    fn tnc_closed(&self) {}
+    /// This adapter or the whole TNC has been shut down. There will be no more tx/rx. This is a
+    /// permanent operation.
+    fn close(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
 
     /// A new incoming stream has begun.
     ///

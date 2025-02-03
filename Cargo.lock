@@ -471,6 +471,7 @@ dependencies = [
  "log",
  "m17app",
  "m17core",
+ "thiserror 2.0.11",
 ]
 
 [[package]]

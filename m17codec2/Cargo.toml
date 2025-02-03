@@ -19,4 +19,4 @@ hound = "3.5.1"
 m17core = { version = "0.1", path = "../m17core" }
 m17app = { version = "0.1", path = "../m17app" }
 log = "0.4.22"
-
+thiserror = "2.0.11"

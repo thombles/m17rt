@@ -8,6 +8,7 @@ use cpal::{Sample, SampleFormat, SampleRate};
 use log::debug;
 use m17app::adapter::StreamAdapter;
 use m17app::app::TxHandle;
+use m17app::error::AdapterError;
 use m17app::link_setup::LinkSetup;
 use m17app::link_setup::M17Address;
 use m17app::StreamFrame;
@@ -22,6 +23,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use std::time::Instant;
+use thiserror::Error;
 
 pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
     let codec2 = Codec2::new(Codec2Mode::MODE_3200);
@@ -79,25 +81,25 @@ struct AdapterState {
 }
 
 impl StreamAdapter for Codec2Adapter {
-    fn adapter_registered(&self, _id: usize, handle: TxHandle) {
+    fn start(&self, handle: TxHandle) -> Result<(), AdapterError> {
         self.state.lock().unwrap().tx = Some(handle);
 
         let (end_tx, end_rx) = channel();
+        let (setup_tx, setup_rx) = channel();
         let state = self.state.clone();
         let output_card = self.output_card.clone();
-        std::thread::spawn(move || stream_thread(end_rx, state, output_card));
+        std::thread::spawn(move || stream_thread(end_rx, setup_tx, state, output_card));
         self.state.lock().unwrap().end_tx = Some(end_tx);
+        // Propagate any errors arising in the thread
+        Ok(setup_rx.recv()??)
     }
 
-    fn adapter_removed(&self) {
+    fn close(&self) -> Result<(), AdapterError> {
         let mut state = self.state.lock().unwrap();
         state.tx = None;
         state.end_tx = None;
+        Ok(())
     }
-
-    fn tnc_started(&self) {}
-
-    fn tnc_closed(&self) {}
 
     fn stream_began(&self, _link_setup: LinkSetup) {
         // for now we will assume:
@@ -133,34 +135,78 @@ fn output_cb(data: &mut [i16], state: &Mutex<AdapterState>) {
 }
 
 /// Create and manage the stream from a dedicated thread since it's `!Send`
-fn stream_thread(end: Receiver<()>, state: Arc<Mutex<AdapterState>>, output_card: String) {
+fn stream_thread(
+    end: Receiver<()>,
+    setup_tx: Sender<Result<(), AdapterError>>,
+    state: Arc<Mutex<AdapterState>>,
+    output_card: String,
+) {
     let host = cpal::default_host();
-    let device = host
+    let device = match host
         .output_devices()
         .unwrap()
         .find(|d| d.name().unwrap() == output_card)
-        .unwrap();
-    let mut configs = device.supported_output_configs().unwrap();
+    {
+        Some(d) => d,
+        None => {
+            let _ = setup_tx.send(Err(M17Codec2Error::CardUnavailable(output_card).into()));
+            return;
+        }
+    };
+    let mut configs = match device.supported_output_configs() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = setup_tx.send(Err(M17Codec2Error::OutputConfigsUnavailable(
+                output_card,
+                e,
+            )
+            .into()));
+            return;
+        }
+    };
     // TODO: channels == 1 doesn't work on a Raspberry Pi
     // make this configurable and support interleaving LRLR stereo samples if using 2 channels
-    let config = configs
-        .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
-        .unwrap()
-        .with_sample_rate(SampleRate(8000));
-    let stream = device
-        .build_output_stream(
-            &config.into(),
-            move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
-                output_cb(data, &state);
-            },
-            |e| {
-                // trigger end_tx here? always more edge cases
-                debug!("error occurred in codec2 playback: {e:?}");
-            },
-            None,
-        )
-        .unwrap();
-    stream.play().unwrap();
+    let config = match configs.find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
+    {
+        Some(c) => c,
+        None => {
+            let _ = setup_tx.send(Err(
+                M17Codec2Error::SupportedOutputUnavailable(output_card).into()
+            ));
+            return;
+        }
+    };
+
+    let config = config.with_sample_rate(SampleRate(8000));
+    let stream = match device.build_output_stream(
+        &config.into(),
+        move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
+            output_cb(data, &state);
+        },
+        |e| {
+            // trigger end_tx here? always more edge cases
+            debug!("error occurred in codec2 playback: {e:?}");
+        },
+        None,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = setup_tx.send(Err(
+                M17Codec2Error::OutputStreamBuildError(output_card, e).into()
+            ));
+            return;
+        }
+    };
+    match stream.play() {
+        Ok(()) => (),
+        Err(e) => {
+            let _ = setup_tx.send(Err(
+                M17Codec2Error::OutputStreamPlayError(output_card, e).into()
+            ));
+            return;
+        }
+    }
+    let _ = setup_tx.send(Ok(()));
     let _ = end.recv();
     // it seems concrete impls of Stream have a Drop implementation that will handle termination
 }
@@ -231,4 +277,22 @@ impl WavePlayer {
             next_tick += TICK;
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum M17Codec2Error {
+    #[error("selected card '{0}' does not exist or is in use")]
+    CardUnavailable(String),
+
+    #[error("selected card '{0}' failed to list available output configs: '{1}'")]
+    OutputConfigsUnavailable(String, #[source] cpal::SupportedStreamConfigsError),
+
+    #[error("selected card '{0}' did not offer a compatible output config type, either due to hardware limitations or because it is currently in use")]
+    SupportedOutputUnavailable(String),
+
+    #[error("selected card '{0}' was unable to build an output stream: '{1}'")]
+    OutputStreamBuildError(String, #[source] cpal::BuildStreamError),
+
+    #[error("selected card '{0}' was unable to play an output stream: '{1}'")]
+    OutputStreamPlayError(String, #[source] cpal::PlayStreamError),
 }

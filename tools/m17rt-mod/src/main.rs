@@ -12,7 +12,7 @@ pub fn mod_test() {
     let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts);
     let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt);
     let app = M17App::new(soundmodem);
-    app.start();
+    app.start().unwrap();
     std::thread::sleep(std::time::Duration::from_secs(1));
     println!("Beginning playback...");
     WavePlayer::play(
@@ -24,7 +24,7 @@ pub fn mod_test() {
     );
     println!("Playback complete.");
     std::thread::sleep(std::time::Duration::from_secs(1));
-    app.close();
+    app.close().unwrap();
 }
 
 fn main() {

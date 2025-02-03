@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq, Eq, Clone)]
+/// Errors originating from the M17 Rust Toolkit core
+#[derive(Debug, Error)]
 pub enum M17Error {
     #[error("given callsign contains at least one character invalid in M17: {0}")]
     InvalidCallsignCharacters(char),
@@ -29,4 +30,32 @@ pub enum M17Error {
 
     #[error("failed to read from RRC file: {0}")]
     RrcReadFailed(PathBuf),
+
+    #[error("tried to start app more than once")]
+    InvalidStart,
+
+    #[error("tried to close app that is not started")]
+    InvalidClose,
+
+    #[error("adapter error for id {0}: {1}")]
+    Adapter(usize, #[source] AdapterError),
+}
+
+pub type AdapterError = Box<dyn std::error::Error + Sync + Send + 'static>;
+
+/// Iterator over potentially multiple errors
+#[derive(Debug, Error)]
+pub struct M17Errors(pub(crate) Vec<M17Error>);
+impl Iterator for M17Errors {
+    type Item = M17Error;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.pop()
+    }
+}
+
+impl Display for M17Errors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
 }

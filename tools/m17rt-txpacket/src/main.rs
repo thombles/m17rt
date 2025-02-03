@@ -12,7 +12,7 @@ fn main() {
     let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt);
     let app = M17App::new(soundmodem);
 
-    app.start();
+    app.start().unwrap();
 
     println!("Transmitting packet...");
     let source = M17Address::from_callsign("VK7XT-1").unwrap();
@@ -24,5 +24,5 @@ fn main() {
         .unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
-    app.close();
+    app.close().unwrap();
 }
