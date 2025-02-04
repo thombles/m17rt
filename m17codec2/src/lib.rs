@@ -91,7 +91,7 @@ impl StreamAdapter for Codec2Adapter {
         std::thread::spawn(move || stream_thread(end_rx, setup_tx, state, output_card));
         self.state.lock().unwrap().end_tx = Some(end_tx);
         // Propagate any errors arising in the thread
-        Ok(setup_rx.recv()??)
+        setup_rx.recv()?
     }
 
     fn close(&self) -> Result<(), AdapterError> {

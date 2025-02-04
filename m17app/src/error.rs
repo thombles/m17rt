@@ -2,7 +2,7 @@ use std::{fmt::Display, path::PathBuf};
 
 use thiserror::Error;
 
-/// Errors originating from the M17 Rust Toolkit core
+/// Errors from the M17 Rust Toolkit
 #[derive(Debug, Error)]
 pub enum M17Error {
     #[error("given callsign contains at least one character invalid in M17: {0}")]
@@ -39,9 +39,16 @@ pub enum M17Error {
 
     #[error("adapter error for id {0}: {1}")]
     Adapter(usize, #[source] AdapterError),
+
+    #[error("soundmodem component error: {0}")]
+    Soundmodem(#[source] SoundmodemError),
 }
 
+/// Arbitrary error type returned from adapters, which may be user-implemented
 pub type AdapterError = Box<dyn std::error::Error + Sync + Send + 'static>;
+
+/// Arbitrary error type returned from soundmodem components, which may be user-implemented
+pub type SoundmodemError = Box<dyn std::error::Error + Sync + Send + 'static>;
 
 /// Iterator over potentially multiple errors
 #[derive(Debug, Error)]
@@ -56,6 +63,13 @@ impl Iterator for M17Errors {
 
 impl Display for M17Errors {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
+        let mut displays = vec![];
+        for e in &self.0 {
+            displays.push(e.to_string());
+        }
+        write!(f, "[{}]", displays.join(", "))
     }
 }
+
+#[derive(Debug, Error)]
+pub enum M17SoundmodemError {}

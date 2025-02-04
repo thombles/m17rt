@@ -1,6 +1,6 @@
 use serialport::SerialPort;
 
-use crate::soundmodem::Ptt;
+use crate::{error::SoundmodemError, soundmodem::Ptt};
 
 /// The pin on the serial port which is driving PTT
 pub enum PttPin {
@@ -23,27 +23,27 @@ impl SerialPtt {
             .map(|i| i.port_name)
     }
 
-    pub fn new(port_name: &str, pin: PttPin) -> Self {
+    pub fn new(port_name: &str, pin: PttPin) -> Result<Self, SoundmodemError> {
         // TODO: error handling
         let port = serialport::new(port_name, 9600).open().unwrap();
         let mut s = Self { port, pin };
-        s.ptt_off();
-        s
+        s.ptt_off()?;
+        Ok(s)
     }
 }
 
 impl Ptt for SerialPtt {
-    fn ptt_on(&mut self) {
-        let _ = match self.pin {
+    fn ptt_on(&mut self) -> Result<(), SoundmodemError> {
+        Ok(match self.pin {
             PttPin::Rts => self.port.write_request_to_send(true),
             PttPin::Dtr => self.port.write_data_terminal_ready(true),
-        };
+        }?)
     }
 
-    fn ptt_off(&mut self) {
-        let _ = match self.pin {
+    fn ptt_off(&mut self) -> Result<(), SoundmodemError> {
+        Ok(match self.pin {
             PttPin::Rts => self.port.write_request_to_send(false),
             PttPin::Dtr => self.port.write_data_terminal_ready(false),
-        };
+        }?)
     }
 }

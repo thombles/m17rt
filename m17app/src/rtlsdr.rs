@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    error::M17Error,
+    error::{M17Error, SoundmodemError},
     soundmodem::{InputSource, SoundmodemEvent},
 };
 
@@ -26,8 +26,7 @@ impl RtlSdr {
 }
 
 impl InputSource for RtlSdr {
-    fn start(&self, tx: SyncSender<SoundmodemEvent>) {
-        // TODO: error handling
+    fn start(&self, tx: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
         let mut cmd = Command::new("rtl_fm")
             .args([
                 "-E",
@@ -40,8 +39,7 @@ impl InputSource for RtlSdr {
                 "48k",
             ])
             .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .spawn()?;
         let mut stdout = cmd.stdout.take().unwrap();
         let mut buf = [0u8; 1024];
         let mut leftover: Option<u8> = None;
@@ -72,11 +70,13 @@ impl InputSource for RtlSdr {
             }
         });
         *self.rtlfm.lock().unwrap() = Some(cmd);
+        Ok(())
     }
 
-    fn close(&self) {
+    fn close(&self) -> Result<(), SoundmodemError> {
         if let Some(mut process) = self.rtlfm.lock().unwrap().take() {
             let _ = process.kill();
         }
+        Ok(())
     }
 }

@@ -12,7 +12,7 @@ use cpal::{
 };
 
 use crate::{
-    error::M17Error,
+    error::{M17Error, SoundmodemError},
     soundmodem::{InputSource, OutputBuffer, OutputSink, SoundmodemEvent},
 };
 
@@ -118,12 +118,12 @@ pub struct SoundcardInputSource {
 }
 
 impl InputSource for SoundcardInputSource {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) {
-        let _ = self.event_tx.send(SoundcardEvent::StartInput { samples });
+    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
+        Ok(self.event_tx.send(SoundcardEvent::StartInput { samples })?)
     }
 
-    fn close(&self) {
-        let _ = self.event_tx.send(SoundcardEvent::CloseInput);
+    fn close(&self) -> Result<(), SoundmodemError> {
+        Ok(self.event_tx.send(SoundcardEvent::CloseInput)?)
     }
 }
 
@@ -132,14 +132,18 @@ pub struct SoundcardOutputSink {
 }
 
 impl OutputSink for SoundcardOutputSink {
-    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>) {
-        let _ = self
+    fn start(
+        &self,
+        event_tx: SyncSender<SoundmodemEvent>,
+        buffer: Arc<RwLock<OutputBuffer>>,
+    ) -> Result<(), SoundmodemError> {
+        Ok(self
             .event_tx
-            .send(SoundcardEvent::StartOutput { event_tx, buffer });
+            .send(SoundcardEvent::StartOutput { event_tx, buffer })?)
     }
 
-    fn close(&self) {
-        let _ = self.event_tx.send(SoundcardEvent::CloseOutput);
+    fn close(&self) -> Result<(), SoundmodemError> {
+        Ok(self.event_tx.send(SoundcardEvent::CloseOutput)?)
     }
 }
 

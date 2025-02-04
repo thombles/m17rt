@@ -8,7 +8,7 @@ use m17core::protocol::PacketType;
 fn main() {
     let soundcard = Soundcard::new("plughw:CARD=Device,DEV=0").unwrap();
     soundcard.set_tx_inverted(true);
-    let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts);
+    let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts).unwrap();
     let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt);
     let app = M17App::new(soundmodem);
 

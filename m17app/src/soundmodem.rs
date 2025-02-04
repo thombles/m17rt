@@ -1,4 +1,4 @@
-use crate::error::M17Error;
+use crate::error::{M17Error, SoundmodemError};
 use crate::tnc::{Tnc, TncError};
 use log::debug;
 use m17core::kiss::MAX_FRAME_LEN;
@@ -170,11 +170,12 @@ fn spawn_soundmodem_worker(
                     tnc.set_data_carrier_detect(demodulator.data_carrier_detect());
                 }
                 SoundmodemEvent::Start => {
-                    input.start(event_tx.clone());
-                    output.start(event_tx.clone(), out_buffer.clone());
+                    // TODO: runtime event handling
+                    input.start(event_tx.clone()).unwrap();
+                    output.start(event_tx.clone(), out_buffer.clone()).unwrap();
                 }
                 SoundmodemEvent::Close => {
-                    ptt_driver.ptt_off();
+                    ptt_driver.ptt_off().unwrap();
                     break;
                 }
                 SoundmodemEvent::DidReadFromOutputBuffer { len, timestamp } => {
@@ -200,9 +201,9 @@ fn spawn_soundmodem_worker(
             let new_ptt = tnc.ptt();
             if new_ptt != ptt {
                 if new_ptt {
-                    ptt_driver.ptt_on();
+                    ptt_driver.ptt_on().unwrap();
                 } else {
-                    ptt_driver.ptt_off();
+                    ptt_driver.ptt_off().unwrap();
                 }
             }
             ptt = new_ptt;
@@ -236,8 +237,8 @@ fn spawn_soundmodem_worker(
 }
 
 pub trait InputSource: Send + Sync + 'static {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>);
-    fn close(&self);
+    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError>;
+    fn close(&self) -> Result<(), SoundmodemError>;
 }
 
 pub struct InputRrcFile {
@@ -259,7 +260,7 @@ impl InputRrcFile {
 }
 
 impl InputSource for InputRrcFile {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) {
+    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
         let (end_tx, end_rx) = channel();
         let baseband = self.baseband.clone();
         std::thread::spawn(move || {
@@ -291,10 +292,12 @@ impl InputSource for InputRrcFile {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
+        Ok(())
     }
 
-    fn close(&self) {
+    fn close(&self) -> Result<(), SoundmodemError> {
         let _ = self.end_tx.lock().unwrap().take();
+        Ok(())
     }
 }
 
@@ -311,7 +314,7 @@ impl NullInputSource {
 }
 
 impl InputSource for NullInputSource {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) {
+    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
         let (end_tx, end_rx) = channel();
         std::thread::spawn(move || {
             // assuming 48 kHz for now
@@ -333,10 +336,12 @@ impl InputSource for NullInputSource {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
+        Ok(())
     }
 
-    fn close(&self) {
+    fn close(&self) -> Result<(), SoundmodemError> {
         let _ = self.end_tx.lock().unwrap().take();
+        Ok(())
     }
 }
 
@@ -370,8 +375,12 @@ impl Default for OutputBuffer {
 }
 
 pub trait OutputSink: Send + Sync + 'static {
-    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>);
-    fn close(&self);
+    fn start(
+        &self,
+        event_tx: SyncSender<SoundmodemEvent>,
+        buffer: Arc<RwLock<OutputBuffer>>,
+    ) -> Result<(), SoundmodemError>;
+    fn close(&self) -> Result<(), SoundmodemError>;
 }
 
 pub struct OutputRrcFile {
@@ -389,13 +398,14 @@ impl OutputRrcFile {
 }
 
 impl OutputSink for OutputRrcFile {
-    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>) {
+    fn start(
+        &self,
+        event_tx: SyncSender<SoundmodemEvent>,
+        buffer: Arc<RwLock<OutputBuffer>>,
+    ) -> Result<(), SoundmodemError> {
         let (end_tx, end_rx) = channel();
-        let path = self.path.clone();
+        let mut file = File::create(self.path.clone())?;
         std::thread::spawn(move || {
-            // TODO: error handling
-            let mut file = File::create(path).unwrap();
-
             // assuming 48 kHz for now
             const TICK: Duration = Duration::from_millis(25);
             const SAMPLES_PER_TICK: usize = 1200;
@@ -437,10 +447,12 @@ impl OutputSink for OutputRrcFile {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
+        Ok(())
     }
 
-    fn close(&self) {
+    fn close(&self) -> Result<(), SoundmodemError> {
         let _ = self.end_tx.lock().unwrap().take();
+        Ok(())
     }
 }
 
@@ -463,7 +475,11 @@ impl Default for NullOutputSink {
 }
 
 impl OutputSink for NullOutputSink {
-    fn start(&self, event_tx: SyncSender<SoundmodemEvent>, buffer: Arc<RwLock<OutputBuffer>>) {
+    fn start(
+        &self,
+        event_tx: SyncSender<SoundmodemEvent>,
+        buffer: Arc<RwLock<OutputBuffer>>,
+    ) -> Result<(), SoundmodemError> {
         let (end_tx, end_rx) = channel();
         std::thread::spawn(move || {
             // assuming 48 kHz for now
@@ -498,16 +514,18 @@ impl OutputSink for NullOutputSink {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
+        Ok(())
     }
 
-    fn close(&self) {
+    fn close(&self) -> Result<(), SoundmodemError> {
         let _ = self.end_tx.lock().unwrap().take();
+        Ok(())
     }
 }
 
 pub trait Ptt: Send + 'static {
-    fn ptt_on(&mut self);
-    fn ptt_off(&mut self);
+    fn ptt_on(&mut self) -> Result<(), SoundmodemError>;
+    fn ptt_off(&mut self) -> Result<(), SoundmodemError>;
 }
 
 /// There is no PTT because this TNC will never make transmissions on a real radio.
@@ -526,6 +544,11 @@ impl Default for NullPtt {
 }
 
 impl Ptt for NullPtt {
-    fn ptt_on(&mut self) {}
-    fn ptt_off(&mut self) {}
+    fn ptt_on(&mut self) -> Result<(), SoundmodemError> {
+        Ok(())
+    }
+
+    fn ptt_off(&mut self) -> Result<(), SoundmodemError> {
+        Ok(())
+    }
 }
