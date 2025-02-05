@@ -2,7 +2,7 @@ use m17app::app::M17App;
 use m17app::link_setup::M17Address;
 use m17app::serial::{PttPin, SerialPtt};
 use m17app::soundcard::Soundcard;
-use m17app::soundmodem::Soundmodem;
+use m17app::soundmodem::{NullErrorHandler, Soundmodem};
 use m17codec2::WavePlayer;
 use std::path::PathBuf;
 
@@ -10,7 +10,12 @@ pub fn mod_test() {
     let soundcard = Soundcard::new("plughw:CARD=Device,DEV=0").unwrap();
     soundcard.set_tx_inverted(true);
     let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts).unwrap();
-    let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt);
+    let soundmodem = Soundmodem::new(
+        soundcard.input(),
+        soundcard.output(),
+        ptt,
+        NullErrorHandler::new(),
+    );
     let app = M17App::new(soundmodem);
     app.start().unwrap();
     std::thread::sleep(std::time::Duration::from_secs(1));

@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    error::{M17Error, SoundmodemError},
-    soundmodem::{InputSource, SoundmodemEvent},
+    error::M17Error,
+    soundmodem::{InputSource, SoundmodemErrorSender, SoundmodemEvent},
 };
 
 pub struct RtlSdr {
@@ -26,8 +26,8 @@ impl RtlSdr {
 }
 
 impl InputSource for RtlSdr {
-    fn start(&self, tx: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
-        let mut cmd = Command::new("rtl_fm")
+    fn start(&self, tx: SyncSender<SoundmodemEvent>, errors: SoundmodemErrorSender) {
+        let mut cmd = match Command::new("rtl_fm")
             .args([
                 "-E",
                 "offset",
@@ -39,7 +39,14 @@ impl InputSource for RtlSdr {
                 "48k",
             ])
             .stdout(Stdio::piped())
-            .spawn()?;
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                errors.send_error(e);
+                return;
+            }
+        };
         let mut stdout = cmd.stdout.take().unwrap();
         let mut buf = [0u8; 1024];
         let mut leftover: Option<u8> = None;
@@ -70,13 +77,11 @@ impl InputSource for RtlSdr {
             }
         });
         *self.rtlfm.lock().unwrap() = Some(cmd);
-        Ok(())
     }
 
-    fn close(&self) -> Result<(), SoundmodemError> {
+    fn close(&self) {
         if let Some(mut process) = self.rtlfm.lock().unwrap().take() {
             let _ = process.kill();
         }
-        Ok(())
     }
 }

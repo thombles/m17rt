@@ -354,22 +354,15 @@ fn spawn_writer<T: Tnc>(mut tnc: T, event_rx: mpsc::Receiver<TncControlEvent>) {
         while let Ok(ev) = event_rx.recv() {
             match ev {
                 TncControlEvent::Kiss(k) => {
-                    if let Err(e) = tnc.write_all(k.as_bytes()) {
-                        debug!("kiss send err: {:?}", e);
+                    if tnc.write_all(k.as_bytes()).is_err() {
                         return;
                     }
                 }
                 TncControlEvent::Start => {
-                    if let Err(e) = tnc.start() {
-                        debug!("tnc start err: {:?}", e);
-                        return;
-                    }
+                    tnc.start();
                 }
                 TncControlEvent::Close => {
-                    if let Err(e) = tnc.close() {
-                        debug!("tnc close err: {:?}", e);
-                        return;
-                    }
+                    tnc.close();
                 }
             }
         }

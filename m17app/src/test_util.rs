@@ -10,13 +10,9 @@ impl Tnc for NullTnc {
         Ok(self.clone())
     }
 
-    fn start(&mut self) -> Result<(), crate::tnc::TncError> {
-        Ok(())
-    }
+    fn start(&mut self) {}
 
-    fn close(&mut self) -> Result<(), crate::tnc::TncError> {
-        Ok(())
-    }
+    fn close(&mut self) {}
 }
 
 impl Write for NullTnc {

@@ -17,10 +17,10 @@ pub trait Tnc: Read + Write + Sized + Send + 'static {
     fn try_clone(&mut self) -> Result<Self, TncError>;
 
     /// Start I/O.
-    fn start(&mut self) -> Result<(), TncError>;
+    fn start(&mut self);
 
     /// Shut down I/O - it is assumed we cannot restart.
-    fn close(&mut self) -> Result<(), TncError>;
+    fn close(&mut self);
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -34,13 +34,11 @@ impl Tnc for std::net::TcpStream {
         std::net::TcpStream::try_clone(self).map_err(|_| TncError::Unknown)
     }
 
-    fn start(&mut self) -> Result<(), TncError> {
+    fn start(&mut self) {
         // already started, hopefully we get onto reading the socket quickly
-        Ok(())
     }
 
-    fn close(&mut self) -> Result<(), TncError> {
-        self.shutdown(std::net::Shutdown::Both)
-            .map_err(|_| TncError::Unknown)
+    fn close(&mut self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
     }
 }

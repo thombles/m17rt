@@ -24,8 +24,7 @@ impl SerialPtt {
     }
 
     pub fn new(port_name: &str, pin: PttPin) -> Result<Self, SoundmodemError> {
-        // TODO: error handling
-        let port = serialport::new(port_name, 9600).open().unwrap();
+        let port = serialport::new(port_name, 9600).open()?;
         let mut s = Self { port, pin };
         s.ptt_off()?;
         Ok(s)

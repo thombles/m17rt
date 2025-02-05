@@ -70,8 +70,7 @@ pub trait StreamAdapter: Send + Sync + 'static {
         let _ = data;
     }
 
-    // TODO
-    // fn stream_lost(&self);
+    // TODO: callbacks for LICH metadata received
     // fn stream_assembled_text_block()
     // fn stream_gnss_data()
     // fn stream_extended_callsign_data()

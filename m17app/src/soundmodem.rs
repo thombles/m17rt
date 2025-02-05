@@ -1,6 +1,5 @@
 use crate::error::{M17Error, SoundmodemError};
 use crate::tnc::{Tnc, TncError};
-use log::debug;
 use m17core::kiss::MAX_FRAME_LEN;
 use m17core::modem::{Demodulator, Modulator, ModulatorAction, SoftDemodulator, SoftModulator};
 use m17core::tnc::SoftTnc;
@@ -12,18 +11,25 @@ use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TryRe
 use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use thiserror::Error;
 
 pub struct Soundmodem {
     event_tx: SyncSender<SoundmodemEvent>,
     kiss_out_rx: Arc<Mutex<Receiver<Arc<[u8]>>>>,
     partial_kiss_out: Arc<Mutex<Option<PartialKissOut>>>,
+    error_handler: ErrorHandlerInternal,
 }
 
 impl Soundmodem {
-    pub fn new<I: InputSource, O: OutputSink, P: Ptt>(input: I, output: O, ptt: P) -> Self {
-        // must create TNC here
+    pub fn new<I: InputSource, O: OutputSink, P: Ptt, E: ErrorHandler>(
+        input: I,
+        output: O,
+        ptt: P,
+        error: E,
+    ) -> Self {
         let (event_tx, event_rx) = sync_channel(128);
         let (kiss_out_tx, kiss_out_rx) = sync_channel(128);
+        let runtime_error_handler: ErrorHandlerInternal = Arc::new(Mutex::new(Box::new(error)));
         spawn_soundmodem_worker(
             event_tx.clone(),
             event_rx,
@@ -31,12 +37,71 @@ impl Soundmodem {
             Box::new(input),
             Box::new(output),
             Box::new(ptt),
+            runtime_error_handler.clone(),
         );
         Self {
             event_tx,
             kiss_out_rx: Arc::new(Mutex::new(kiss_out_rx)),
             partial_kiss_out: Arc::new(Mutex::new(None)),
+            error_handler: runtime_error_handler,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ErrorSource {
+    Input,
+    Output,
+    Ptt,
+}
+
+pub trait ErrorHandler: Send + Sync + 'static {
+    fn soundmodem_error(&mut self, source: ErrorSource, err: SoundmodemError);
+}
+
+impl<F> ErrorHandler for F
+where
+    F: FnMut(ErrorSource, SoundmodemError) + Send + Sync + 'static,
+{
+    fn soundmodem_error(&mut self, source: ErrorSource, err: SoundmodemError) {
+        self(source, err)
+    }
+}
+
+pub struct NullErrorHandler;
+
+impl NullErrorHandler {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Default for NullErrorHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ErrorHandler for NullErrorHandler {
+    fn soundmodem_error(&mut self, source: ErrorSource, err: SoundmodemError) {
+        let _ = source;
+        let _ = err;
+    }
+}
+
+type ErrorHandlerInternal = Arc<Mutex<Box<dyn ErrorHandler>>>;
+
+#[derive(Clone)]
+pub struct SoundmodemErrorSender {
+    source: ErrorSource,
+    event_tx: SyncSender<SoundmodemEvent>,
+}
+
+impl SoundmodemErrorSender {
+    pub fn send_error<E: Into<SoundmodemError>>(&self, err: E) {
+        let _ = self
+            .event_tx
+            .send(SoundmodemEvent::RuntimeError(self.source, err.into()));
     }
 }
 
@@ -96,17 +161,16 @@ impl Tnc for Soundmodem {
             event_tx: self.event_tx.clone(),
             kiss_out_rx: self.kiss_out_rx.clone(),
             partial_kiss_out: self.partial_kiss_out.clone(),
+            error_handler: self.error_handler.clone(),
         })
     }
 
-    fn start(&mut self) -> Result<(), TncError> {
+    fn start(&mut self) {
         let _ = self.event_tx.send(SoundmodemEvent::Start);
-        Ok(())
     }
 
-    fn close(&mut self) -> Result<(), TncError> {
+    fn close(&mut self) {
         let _ = self.event_tx.send(SoundmodemEvent::Close);
-        Ok(())
     }
 }
 
@@ -117,6 +181,7 @@ pub enum SoundmodemEvent {
     Close,
     DidReadFromOutputBuffer { len: usize, timestamp: Instant },
     OutputUnderrun,
+    RuntimeError(ErrorSource, SoundmodemError),
 }
 
 fn spawn_soundmodem_worker(
@@ -126,6 +191,7 @@ fn spawn_soundmodem_worker(
     input: Box<dyn InputSource>,
     output: Box<dyn OutputSink>,
     mut ptt_driver: Box<dyn Ptt>,
+    error_handler: ErrorHandlerInternal,
 ) {
     std::thread::spawn(move || {
         // TODO: should be able to provide a custom Demodulator for a soundmodem
@@ -170,12 +236,26 @@ fn spawn_soundmodem_worker(
                     tnc.set_data_carrier_detect(demodulator.data_carrier_detect());
                 }
                 SoundmodemEvent::Start => {
-                    // TODO: runtime event handling
-                    input.start(event_tx.clone()).unwrap();
-                    output.start(event_tx.clone(), out_buffer.clone()).unwrap();
+                    let input_errors = SoundmodemErrorSender {
+                        source: ErrorSource::Input,
+                        event_tx: event_tx.clone(),
+                    };
+                    input.start(event_tx.clone(), input_errors);
+                    let output_errors = SoundmodemErrorSender {
+                        source: ErrorSource::Output,
+                        event_tx: event_tx.clone(),
+                    };
+                    output.start(event_tx.clone(), out_buffer.clone(), output_errors);
                 }
                 SoundmodemEvent::Close => {
-                    ptt_driver.ptt_off().unwrap();
+                    input.close();
+                    output.close();
+                    if let Err(e) = ptt_driver.ptt_off() {
+                        error_handler
+                            .lock()
+                            .unwrap()
+                            .soundmodem_error(ErrorSource::Ptt, e);
+                    }
                     break;
                 }
                 SoundmodemEvent::DidReadFromOutputBuffer { len, timestamp } => {
@@ -193,7 +273,11 @@ fn spawn_soundmodem_worker(
                     );
                 }
                 SoundmodemEvent::OutputUnderrun => {
+                    log::debug!("output underrun");
                     // TODO: cancel transmission, send empty data frame to host
+                }
+                SoundmodemEvent::RuntimeError(source, err) => {
+                    error_handler.lock().unwrap().soundmodem_error(source, err);
                 }
             }
 
@@ -201,9 +285,17 @@ fn spawn_soundmodem_worker(
             let new_ptt = tnc.ptt();
             if new_ptt != ptt {
                 if new_ptt {
-                    ptt_driver.ptt_on().unwrap();
-                } else {
-                    ptt_driver.ptt_off().unwrap();
+                    if let Err(e) = ptt_driver.ptt_on() {
+                        error_handler
+                            .lock()
+                            .unwrap()
+                            .soundmodem_error(ErrorSource::Ptt, e);
+                    }
+                } else if let Err(e) = ptt_driver.ptt_off() {
+                    error_handler
+                        .lock()
+                        .unwrap()
+                        .soundmodem_error(ErrorSource::Ptt, e);
                 }
             }
             ptt = new_ptt;
@@ -237,8 +329,8 @@ fn spawn_soundmodem_worker(
 }
 
 pub trait InputSource: Send + Sync + 'static {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError>;
-    fn close(&self) -> Result<(), SoundmodemError>;
+    fn start(&self, samples: SyncSender<SoundmodemEvent>, errors: SoundmodemErrorSender);
+    fn close(&self);
 }
 
 pub struct InputRrcFile {
@@ -260,7 +352,7 @@ impl InputRrcFile {
 }
 
 impl InputSource for InputRrcFile {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
+    fn start(&self, samples: SyncSender<SoundmodemEvent>, errors: SoundmodemErrorSender) {
         let (end_tx, end_rx) = channel();
         let baseband = self.baseband.clone();
         std::thread::spawn(move || {
@@ -279,8 +371,11 @@ impl InputSource for InputRrcFile {
                 buf[idx] = sample;
                 idx += 1;
                 if idx == SAMPLES_PER_TICK {
-                    if let Err(e) = samples.try_send(SoundmodemEvent::BasebandInput(buf.into())) {
-                        debug!("overflow feeding soundmodem: {e:?}");
+                    if samples
+                        .try_send(SoundmodemEvent::BasebandInput(buf.into()))
+                        .is_err()
+                    {
+                        errors.send_error(InputRrcError::Overflow);
                     }
                     next_tick += TICK;
                     idx = 0;
@@ -292,13 +387,17 @@ impl InputSource for InputRrcFile {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
-        Ok(())
     }
 
-    fn close(&self) -> Result<(), SoundmodemError> {
+    fn close(&self) {
         let _ = self.end_tx.lock().unwrap().take();
-        Ok(())
     }
+}
+
+#[derive(Debug, Error)]
+pub enum InputRrcError {
+    #[error("overflow occurred feeding sample to soundmodem")]
+    Overflow,
 }
 
 pub struct NullInputSource {
@@ -314,7 +413,7 @@ impl NullInputSource {
 }
 
 impl InputSource for NullInputSource {
-    fn start(&self, samples: SyncSender<SoundmodemEvent>) -> Result<(), SoundmodemError> {
+    fn start(&self, samples: SyncSender<SoundmodemEvent>, errors: SoundmodemErrorSender) {
         let (end_tx, end_rx) = channel();
         std::thread::spawn(move || {
             // assuming 48 kHz for now
@@ -328,21 +427,28 @@ impl InputSource for NullInputSource {
                 if end_rx.try_recv() != Err(TryRecvError::Empty) {
                     break;
                 }
-                if let Err(e) = samples.try_send(SoundmodemEvent::BasebandInput(
-                    [0i16; SAMPLES_PER_TICK].into(),
-                )) {
-                    debug!("overflow feeding soundmodem: {e:?}");
+                if samples
+                    .try_send(SoundmodemEvent::BasebandInput(
+                        [0i16; SAMPLES_PER_TICK].into(),
+                    ))
+                    .is_err()
+                {
+                    errors.send_error(NullInputError::Overflow);
                 }
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
-        Ok(())
     }
 
-    fn close(&self) -> Result<(), SoundmodemError> {
+    fn close(&self) {
         let _ = self.end_tx.lock().unwrap().take();
-        Ok(())
     }
+}
+
+#[derive(Debug, Error)]
+pub enum NullInputError {
+    #[error("overflow occurred feeding sample to soundmodem")]
+    Overflow,
 }
 
 impl Default for NullInputSource {
@@ -379,8 +485,9 @@ pub trait OutputSink: Send + Sync + 'static {
         &self,
         event_tx: SyncSender<SoundmodemEvent>,
         buffer: Arc<RwLock<OutputBuffer>>,
-    ) -> Result<(), SoundmodemError>;
-    fn close(&self) -> Result<(), SoundmodemError>;
+        errors: SoundmodemErrorSender,
+    );
+    fn close(&self);
 }
 
 pub struct OutputRrcFile {
@@ -402,9 +509,16 @@ impl OutputSink for OutputRrcFile {
         &self,
         event_tx: SyncSender<SoundmodemEvent>,
         buffer: Arc<RwLock<OutputBuffer>>,
-    ) -> Result<(), SoundmodemError> {
+        errors: SoundmodemErrorSender,
+    ) {
         let (end_tx, end_rx) = channel();
-        let mut file = File::create(self.path.clone())?;
+        let mut file = match File::create(self.path.clone()) {
+            Ok(f) => f,
+            Err(e) => {
+                errors.send_error(OutputRrcError::Open(e));
+                return;
+            }
+        };
         std::thread::spawn(move || {
             // assuming 48 kHz for now
             const TICK: Duration = Duration::from_millis(25);
@@ -431,13 +545,12 @@ impl OutputSink for OutputRrcFile {
                         out.copy_from_slice(&[be[0], be[1]]);
                         buf_used += 2;
                     } else if !buffer.idling {
-                        debug!("output rrc file had underrun");
                         let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
                         break;
                     }
                 }
                 if let Err(e) = file.write_all(&buf[0..buf_used]) {
-                    debug!("failed to write to rrc file: {e:?}");
+                    errors.send_error(OutputRrcError::WriteError(e));
                     break;
                 }
                 let _ = event_tx.send(SoundmodemEvent::DidReadFromOutputBuffer {
@@ -447,13 +560,20 @@ impl OutputSink for OutputRrcFile {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
-        Ok(())
     }
 
-    fn close(&self) -> Result<(), SoundmodemError> {
+    fn close(&self) {
         let _ = self.end_tx.lock().unwrap().take();
-        Ok(())
     }
+}
+
+#[derive(Debug, Error)]
+pub enum OutputRrcError {
+    #[error("unable to open rrc file for writing: {0}")]
+    Open(#[source] std::io::Error),
+
+    #[error("error writing to output file: {0}")]
+    WriteError(#[source] std::io::Error),
 }
 
 pub struct NullOutputSink {
@@ -479,7 +599,8 @@ impl OutputSink for NullOutputSink {
         &self,
         event_tx: SyncSender<SoundmodemEvent>,
         buffer: Arc<RwLock<OutputBuffer>>,
-    ) -> Result<(), SoundmodemError> {
+        _errors: SoundmodemErrorSender,
+    ) {
         let (end_tx, end_rx) = channel();
         std::thread::spawn(move || {
             // assuming 48 kHz for now
@@ -499,7 +620,6 @@ impl OutputSink for NullOutputSink {
                 for _ in 0..SAMPLES_PER_TICK {
                     if buffer.samples.pop_front().is_none() {
                         if !buffer.idling {
-                            debug!("null output had underrun");
                             let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
                             break;
                         }
@@ -514,12 +634,10 @@ impl OutputSink for NullOutputSink {
             }
         });
         *self.end_tx.lock().unwrap() = Some(end_tx);
-        Ok(())
     }
 
-    fn close(&self) -> Result<(), SoundmodemError> {
+    fn close(&self) {
         let _ = self.end_tx.lock().unwrap().take();
-        Ok(())
     }
 }
 
