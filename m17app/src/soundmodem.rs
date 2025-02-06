@@ -4,6 +4,7 @@ use m17core::kiss::MAX_FRAME_LEN;
 use m17core::modem::{Demodulator, Modulator, ModulatorAction, SoftDemodulator, SoftModulator};
 use m17core::tnc::SoftTnc;
 use std::collections::VecDeque;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::path::PathBuf;
@@ -17,7 +18,6 @@ pub struct Soundmodem {
     event_tx: SyncSender<SoundmodemEvent>,
     kiss_out_rx: Arc<Mutex<Receiver<Arc<[u8]>>>>,
     partial_kiss_out: Arc<Mutex<Option<PartialKissOut>>>,
-    error_handler: ErrorHandlerInternal,
 }
 
 impl Soundmodem {
@@ -29,7 +29,6 @@ impl Soundmodem {
     ) -> Self {
         let (event_tx, event_rx) = sync_channel(128);
         let (kiss_out_tx, kiss_out_rx) = sync_channel(128);
-        let runtime_error_handler: ErrorHandlerInternal = Arc::new(Mutex::new(Box::new(error)));
         spawn_soundmodem_worker(
             event_tx.clone(),
             event_rx,
@@ -37,13 +36,12 @@ impl Soundmodem {
             Box::new(input),
             Box::new(output),
             Box::new(ptt),
-            runtime_error_handler.clone(),
+            Box::new(error),
         );
         Self {
             event_tx,
             kiss_out_rx: Arc::new(Mutex::new(kiss_out_rx)),
             partial_kiss_out: Arc::new(Mutex::new(None)),
-            error_handler: runtime_error_handler,
         }
     }
 }
@@ -53,6 +51,16 @@ pub enum ErrorSource {
     Input,
     Output,
     Ptt,
+}
+
+impl Display for ErrorSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Input => write!(f, "Input"),
+            Self::Output => write!(f, "Output"),
+            Self::Ptt => write!(f, "PTT"),
+        }
+    }
 }
 
 pub trait ErrorHandler: Send + Sync + 'static {
@@ -68,6 +76,7 @@ where
     }
 }
 
+/// Soundmodem errors will be ignored.
 pub struct NullErrorHandler;
 
 impl NullErrorHandler {
@@ -89,7 +98,47 @@ impl ErrorHandler for NullErrorHandler {
     }
 }
 
-type ErrorHandlerInternal = Arc<Mutex<Box<dyn ErrorHandler>>>;
+/// Soundmodem errors will be logged at DEBUG level via the `log` crate.
+pub struct LogErrorHandler;
+
+impl LogErrorHandler {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Default for LogErrorHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ErrorHandler for LogErrorHandler {
+    fn soundmodem_error(&mut self, source: ErrorSource, err: SoundmodemError) {
+        log::debug!("Soundmodem error: {source} - {err}");
+    }
+}
+
+/// Soundmodem errors will be logged to stdout.
+pub struct StdoutErrorHandler;
+
+impl StdoutErrorHandler {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Default for StdoutErrorHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ErrorHandler for StdoutErrorHandler {
+    fn soundmodem_error(&mut self, source: ErrorSource, err: SoundmodemError) {
+        println!("Soundmodem error: {source} - {err}");
+    }
+}
 
 #[derive(Clone)]
 pub struct SoundmodemErrorSender {
@@ -161,7 +210,6 @@ impl Tnc for Soundmodem {
             event_tx: self.event_tx.clone(),
             kiss_out_rx: self.kiss_out_rx.clone(),
             partial_kiss_out: self.partial_kiss_out.clone(),
-            error_handler: self.error_handler.clone(),
         })
     }
 
@@ -191,7 +239,7 @@ fn spawn_soundmodem_worker(
     input: Box<dyn InputSource>,
     output: Box<dyn OutputSink>,
     mut ptt_driver: Box<dyn Ptt>,
-    error_handler: ErrorHandlerInternal,
+    mut error_handler: Box<dyn ErrorHandler>,
 ) {
     std::thread::spawn(move || {
         // TODO: should be able to provide a custom Demodulator for a soundmodem
@@ -251,10 +299,7 @@ fn spawn_soundmodem_worker(
                     input.close();
                     output.close();
                     if let Err(e) = ptt_driver.ptt_off() {
-                        error_handler
-                            .lock()
-                            .unwrap()
-                            .soundmodem_error(ErrorSource::Ptt, e);
+                        error_handler.soundmodem_error(ErrorSource::Ptt, e);
                     }
                     break;
                 }
@@ -277,7 +322,7 @@ fn spawn_soundmodem_worker(
                     // TODO: cancel transmission, send empty data frame to host
                 }
                 SoundmodemEvent::RuntimeError(source, err) => {
-                    error_handler.lock().unwrap().soundmodem_error(source, err);
+                    error_handler.soundmodem_error(source, err);
                 }
             }
 
@@ -286,16 +331,10 @@ fn spawn_soundmodem_worker(
             if new_ptt != ptt {
                 if new_ptt {
                     if let Err(e) = ptt_driver.ptt_on() {
-                        error_handler
-                            .lock()
-                            .unwrap()
-                            .soundmodem_error(ErrorSource::Ptt, e);
+                        error_handler.soundmodem_error(ErrorSource::Ptt, e);
                     }
                 } else if let Err(e) = ptt_driver.ptt_off() {
-                    error_handler
-                        .lock()
-                        .unwrap()
-                        .soundmodem_error(ErrorSource::Ptt, e);
+                    error_handler.soundmodem_error(ErrorSource::Ptt, e);
                 }
             }
             ptt = new_ptt;
