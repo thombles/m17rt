@@ -225,6 +225,8 @@ impl SoftTnc {
                 self.state = State::Idle;
             }
         }
+        // TODO: should expire packet rx if we have not received a frame for a while
+        // otherwise we could pick up the LSF from one station and FinalFrame from another
     }
 
     pub fn ptt(&self) -> bool {
@@ -627,16 +629,156 @@ impl Default for PendingPacket {
 mod tests {
     use super::*;
     use crate::kiss::{KissCommand, PORT_STREAM};
-    use crate::protocol::StreamFrame;
+    use crate::protocol::{PacketType, StreamFrame};
 
-    // TODO: finish all handle_frame tests as below
-    // this will be much more straightforward when we have a way to create LSFs programatically
+    #[test]
+    fn tnc_receive_single_frame_packet() {
+        let lsf = LsfFrame::new_packet(
+            &Address::Callsign(Callsign(*b"VK7XT    ")),
+            &Address::Broadcast,
+        );
+        let mut payload = [0u8; 25];
+        let (pt, pt_len) = PacketType::Sms.as_proto();
+        payload[0..pt_len].copy_from_slice(&pt[0..pt_len]);
+        payload[pt_len] = 0x41; // a message
+        let crc = crate::crc::m17_crc(&payload[0..=pt_len]).to_be_bytes();
+        payload[pt_len + 1] = crc[0];
+        payload[pt_len + 2] = crc[1];
 
-    // receiving a single-frame packet
+        let packet = PacketFrame {
+            payload,
+            counter: PacketFrameCounter::FinalFrame {
+                payload_len: pt_len + 3,
+            },
+        };
+        let mut tnc = SoftTnc::new();
+        let mut kiss = KissFrame::new_empty();
 
-    // receiving a multi-frame packet
+        // TNC consumes LSF but has nothing to report yet
+        tnc.handle_frame(Frame::Lsf(lsf));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
 
-    // part of one packet and then another
+        // TODO: when support is added for the basic packet port they could arrive in either order
+
+        tnc.handle_frame(Frame::Packet(packet));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_PACKET_FULL);
+
+        let mut payload_buf = [0u8; 2048];
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 30 + 1 + pt_len + 2);
+
+        // did we receive our message? (after the LSF)
+        assert_eq!(payload_buf[pt_len + 30], 0x41);
+    }
+
+    #[test]
+    fn tnc_receive_multiple_frame_packet() {
+        let lsf = LsfFrame::new_packet(
+            &Address::Callsign(Callsign(*b"VK7XT    ")),
+            &Address::Broadcast,
+        );
+        let mut payload = [0x41u8; 26]; // spans two frames
+        let (pt, pt_len) = PacketType::Sms.as_proto();
+        payload[0..pt_len].copy_from_slice(&pt[0..pt_len]);
+        let crc = crate::crc::m17_crc(&payload[0..24]).to_be_bytes();
+        payload[24] = crc[0];
+        payload[25] = crc[1];
+
+        let packet1 = PacketFrame {
+            payload: payload[0..25].try_into().unwrap(),
+            counter: PacketFrameCounter::Frame { index: 0 },
+        };
+        let mut payload2 = [0u8; 25];
+        payload2[0] = payload[25];
+        let packet2 = PacketFrame {
+            payload: payload2,
+            counter: PacketFrameCounter::FinalFrame { payload_len: 1 },
+        };
+
+        let mut tnc = SoftTnc::new();
+        let mut kiss = KissFrame::new_empty();
+
+        // Nothing to report until second final packet frame received
+        tnc.handle_frame(Frame::Lsf(lsf));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
+        tnc.handle_frame(Frame::Packet(packet1));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
+
+        tnc.handle_frame(Frame::Packet(packet2));
+        kiss.len = tnc.read_kiss(&mut kiss.data);
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_PACKET_FULL);
+
+        let mut payload_buf = [0u8; 2048];
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 30 + 26);
+
+        // did we receive our message? (after the LSF)
+        assert_eq!(payload_buf[pt_len + 30], 0x41);
+    }
+
+    #[test]
+    fn tnc_receive_partial_packet() {
+        let lsf = LsfFrame::new_packet(
+            &Address::Callsign(Callsign(*b"VK7XT    ")),
+            &Address::Broadcast,
+        );
+        let mut payload = [0x41u8; 26]; // spans two frames
+        let (pt, pt_len) = PacketType::Sms.as_proto();
+        payload[0..pt_len].copy_from_slice(&pt[0..pt_len]);
+        let crc = crate::crc::m17_crc(&payload[0..24]).to_be_bytes();
+        payload[24] = crc[0];
+        payload[25] = crc[1];
+
+        let packet1 = PacketFrame {
+            payload: payload[0..25].try_into().unwrap(),
+            counter: PacketFrameCounter::Frame { index: 0 },
+        };
+        // final frame of this transmission is dropped
+
+        let lsf2 = LsfFrame::new_packet(
+            &Address::Callsign(Callsign(*b"VK7XT    ")),
+            &Address::Broadcast,
+        );
+        let mut payload = [0u8; 25];
+        let (pt, pt_len) = PacketType::Sms.as_proto();
+        payload[0..pt_len].copy_from_slice(&pt[0..pt_len]);
+        payload[pt_len] = 0x42;
+        let crc = crate::crc::m17_crc(&payload[0..=pt_len]).to_be_bytes();
+        payload[pt_len + 1] = crc[0];
+        payload[pt_len + 2] = crc[1];
+
+        let packet2 = PacketFrame {
+            payload: payload[0..25].try_into().unwrap(),
+            counter: PacketFrameCounter::FinalFrame {
+                payload_len: pt_len + 3,
+            },
+        };
+
+        let mut tnc = SoftTnc::new();
+        let mut kiss = KissFrame::new_empty();
+
+        // Nothing to report until second packet received in its entirety
+        tnc.handle_frame(Frame::Lsf(lsf));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
+        tnc.handle_frame(Frame::Packet(packet1));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
+        tnc.handle_frame(Frame::Lsf(lsf2));
+        assert_eq!(tnc.read_kiss(&mut kiss.data), 0);
+        tnc.handle_frame(Frame::Packet(packet2));
+
+        kiss.len = tnc.read_kiss(&mut kiss.data);
+        assert_eq!(kiss.command().unwrap(), KissCommand::DataFrame);
+        assert_eq!(kiss.port().unwrap(), PORT_PACKET_FULL);
+
+        let mut payload_buf = [0u8; 2048];
+        let n = kiss.decode_payload(&mut payload_buf).unwrap();
+        assert_eq!(n, 30 + 1 + pt_len + 2);
+        // we have received the second packet which has 0x42 in it
+        assert_eq!(payload_buf[pt_len + 30], 0x42);
+    }
 
     #[test]
     fn tnc_receive_stream() {
