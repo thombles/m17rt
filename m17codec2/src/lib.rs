@@ -47,8 +47,7 @@ pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
 /// Subscribes to M17 streams and attempts to play the decoded Codec2
 pub struct Codec2Adapter {
     state: Arc<Mutex<AdapterState>>,
-    // TODO: make this configurable
-    output_card: String,
+    output_card: Option<String>,
 }
 
 impl Codec2Adapter {
@@ -61,8 +60,12 @@ impl Codec2Adapter {
                 end_tx: None,
             })),
             // TODO: this doesn't work on rpi. Use default_output_device() by default
-            output_card: "default".to_owned(),
+            output_card: None,
         }
+    }
+
+    pub fn set_output_card<S: Into<String>>(&mut self, card_name: S) {
+        self.output_card = Some(card_name.into());
     }
 }
 
@@ -139,28 +142,38 @@ fn stream_thread(
     end: Receiver<()>,
     setup_tx: Sender<Result<(), AdapterError>>,
     state: Arc<Mutex<AdapterState>>,
-    output_card: String,
+    output_card: Option<String>,
 ) {
     let host = cpal::default_host();
-    let device = match host
-        .output_devices()
-        .unwrap()
-        .find(|d| d.name().unwrap() == output_card)
-    {
-        Some(d) => d,
-        None => {
-            let _ = setup_tx.send(Err(M17Codec2Error::CardUnavailable(output_card).into()));
-            return;
+    let device = if let Some(output_card) = output_card {
+        // TODO: more error handling for unwraps
+        match host
+            .output_devices()
+            .unwrap()
+            .find(|d| d.name().unwrap() == output_card)
+        {
+            Some(d) => d,
+            None => {
+                let _ = setup_tx.send(Err(M17Codec2Error::CardUnavailable(output_card).into()));
+                return;
+            }
+        }
+    } else {
+        match host.default_output_device() {
+            Some(d) => d,
+            None => {
+                let _ = setup_tx.send(Err(M17Codec2Error::DefaultCardUnavailable.into()));
+                return;
+            }
         }
     };
+    let card_name = device.name().unwrap();
     let mut configs = match device.supported_output_configs() {
         Ok(c) => c,
         Err(e) => {
-            let _ = setup_tx.send(Err(M17Codec2Error::OutputConfigsUnavailable(
-                output_card,
-                e,
-            )
-            .into()));
+            let _ = setup_tx.send(Err(
+                M17Codec2Error::OutputConfigsUnavailable(card_name, e).into()
+            ));
             return;
         }
     };
@@ -171,7 +184,7 @@ fn stream_thread(
         Some(c) => c,
         None => {
             let _ = setup_tx.send(Err(
-                M17Codec2Error::SupportedOutputUnavailable(output_card).into()
+                M17Codec2Error::SupportedOutputUnavailable(card_name).into()
             ));
             return;
         }
@@ -192,7 +205,7 @@ fn stream_thread(
         Ok(s) => s,
         Err(e) => {
             let _ = setup_tx.send(Err(
-                M17Codec2Error::OutputStreamBuildError(output_card, e).into()
+                M17Codec2Error::OutputStreamBuildError(card_name, e).into()
             ));
             return;
         }
@@ -201,7 +214,7 @@ fn stream_thread(
         Ok(()) => (),
         Err(e) => {
             let _ = setup_tx.send(Err(
-                M17Codec2Error::OutputStreamPlayError(output_card, e).into()
+                M17Codec2Error::OutputStreamPlayError(card_name, e).into()
             ));
             return;
         }
@@ -283,6 +296,9 @@ impl WavePlayer {
 pub enum M17Codec2Error {
     #[error("selected card '{0}' does not exist or is in use")]
     CardUnavailable(String),
+
+    #[error("default output card is unavailable")]
+    DefaultCardUnavailable,
 
     #[error("selected card '{0}' failed to list available output configs: '{1}'")]
     OutputConfigsUnavailable(String, #[source] cpal::SupportedStreamConfigsError),
