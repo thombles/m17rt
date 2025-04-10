@@ -5,9 +5,8 @@ edition = "2021"
 keywords = ["amateur", "radio", "m17", "ham", "no_std"]
 license = "MIT"
 authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
-repository = "https://code.octet-stream.net/m17rt"
+repository = "https://github.com/thombles/m17rt"
 description = "M17 digital radio - core protocol definitions, modem, TNC, and KISS"
-homepage = "https://octet-stream.net/p/m17rt/"
 readme = "README.md"
 
 [dependencies]
