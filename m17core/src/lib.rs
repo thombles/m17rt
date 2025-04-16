@@ -7,6 +7,7 @@ pub mod crc;
 pub mod kiss;
 pub mod modem;
 pub mod protocol;
+pub mod reflector;
 pub mod tnc;
 
 mod bits;

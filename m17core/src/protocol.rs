@@ -221,7 +221,7 @@ impl LsfFrame {
         self.recalculate_crc();
     }
 
-    fn recalculate_crc(&mut self) {
+    pub fn recalculate_crc(&mut self) {
         let new_crc = crate::crc::m17_crc(&self.0[0..28]);
         self.0[28..30].copy_from_slice(&new_crc.to_be_bytes());
         debug_assert_eq!(self.check_crc(), 0);
