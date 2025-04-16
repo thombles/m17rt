@@ -3,6 +3,25 @@
 
 use crate::protocol::LsfFrame;
 
+macro_rules! define_message {
+    ($t:tt, $sz:tt) => {
+        pub struct $t([u8; $sz]);
+        impl $t {
+            pub fn from_bytes(b: &[u8]) -> Option<Self> {
+                if b.len() != $sz {
+                    return None;
+                }
+                let mut s = Self([0; $sz]);
+                s.0[..].copy_from_slice(b);
+                if !s.verify_integrity() {
+                    return None;
+                }
+                Some(s)
+            }
+        }
+    };
+}
+
 macro_rules! impl_stream_id {
     ($t:ty, $from:tt) => {
         impl $t {
@@ -114,6 +133,16 @@ macro_rules! impl_internal_crc {
     };
 }
 
+macro_rules! no_crc {
+    ($t:ty) => {
+        impl $t {
+            pub fn verify_integrity(&self) -> bool {
+                true
+            }
+        }
+    };
+}
+
 macro_rules! impl_is_relayed {
     ($t:ty) => {
         impl $t {
@@ -139,10 +168,10 @@ impl Iterator for ModulesIterator<'_> {
     type Item = char;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.modules[self.idx] == 0 {
-            return None;
-        }
         if self.idx < self.modules.len() {
+            if self.modules[self.idx] == 0 {
+                return None;
+            }
             self.idx += 1;
             return Some(self.modules[self.idx - 1] as char);
         }
@@ -175,6 +204,25 @@ pub enum ClientMessage {
     Disconnect(Disconnect),
 }
 
+impl ClientMessage {
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 4 {
+            return None;
+        }
+        match &bytes[0..4] {
+            MAGIC_VOICE => Some(Self::VoiceFull(VoiceFull::from_bytes(&bytes)?)),
+            MAGIC_VOICE_HEADER => Some(Self::VoiceHeader(VoiceHeader::from_bytes(&bytes)?)),
+            MAGIC_VOICE_DATA => Some(Self::VoiceData(VoiceData::from_bytes(&bytes)?)),
+            MAGIC_PACKET => Some(Self::Packet(Packet::from_bytes(&bytes)?)),
+            MAGIC_PONG => Some(Self::Pong(Pong::from_bytes(&bytes)?)),
+            MAGIC_CONNECT => Some(Self::Connect(Connect::from_bytes(&bytes)?)),
+            MAGIC_LISTEN => Some(Self::Listen(Listen::from_bytes(&bytes)?)),
+            MAGIC_DISCONNECT => Some(Self::Disconnect(Disconnect::from_bytes(&bytes)?)),
+            _ => None,
+        }
+    }
+}
+
 /// Messages sent from a reflector to a station/client
 #[allow(clippy::large_enum_variant)]
 pub enum ServerMessage {
@@ -187,6 +235,30 @@ pub enum ServerMessage {
     ForceDisconnect(ForceDisconnect),
     ConnectAcknowledge(ConnectAcknowledge),
     ConnectNack(ConnectNack),
+}
+
+impl ServerMessage {
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 4 {
+            return None;
+        }
+        match &bytes[0..4] {
+            MAGIC_VOICE => Some(Self::VoiceFull(VoiceFull::from_bytes(&bytes)?)),
+            MAGIC_VOICE_HEADER => Some(Self::VoiceHeader(VoiceHeader::from_bytes(&bytes)?)),
+            MAGIC_VOICE_DATA => Some(Self::VoiceData(VoiceData::from_bytes(&bytes)?)),
+            MAGIC_PACKET => Some(Self::Packet(Packet::from_bytes(&bytes)?)),
+            MAGIC_PING => Some(Self::Ping(Ping::from_bytes(&bytes)?)),
+            MAGIC_DISCONNECT if bytes.len() == 4 => Some(Self::DisconnectAcknowledge(
+                DisconnectAcknowledge::from_bytes(&bytes)?,
+            )),
+            MAGIC_DISCONNECT => Some(Self::ForceDisconnect(ForceDisconnect::from_bytes(&bytes)?)),
+            MAGIC_ACKNOWLEDGE => Some(Self::ConnectAcknowledge(ConnectAcknowledge::from_bytes(
+                &bytes,
+            )?)),
+            MAGIC_NACK => Some(Self::ConnectNack(ConnectNack::from_bytes(&bytes)?)),
+            _ => None,
+        }
+    }
 }
 
 /// Messages sent and received between reflectors
@@ -203,25 +275,55 @@ pub enum InterlinkMessage {
     DisconnectInterlink(DisconnectInterlink),
 }
 
-pub struct VoiceFull(pub [u8; 54]);
+impl InterlinkMessage {
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 4 {
+            return None;
+        }
+        match &bytes[0..4] {
+            MAGIC_VOICE => Some(Self::VoiceInterlink(VoiceInterlink::from_bytes(&bytes)?)),
+            MAGIC_VOICE_HEADER => Some(Self::VoiceHeaderInterlink(
+                VoiceHeaderInterlink::from_bytes(&bytes)?,
+            )),
+            MAGIC_VOICE_DATA => Some(Self::VoiceDataInterlink(VoiceDataInterlink::from_bytes(
+                &bytes,
+            )?)),
+            MAGIC_PACKET => Some(Self::PacketInterlink(PacketInterlink::from_bytes(&bytes)?)),
+            MAGIC_PING => Some(Self::Ping(Ping::from_bytes(&bytes)?)),
+            MAGIC_CONNECT => Some(Self::ConnectInterlink(ConnectInterlink::from_bytes(
+                &bytes,
+            )?)),
+            MAGIC_ACKNOWLEDGE => Some(Self::ConnectInterlinkAcknowledge(
+                ConnectInterlinkAcknowledge::from_bytes(&bytes)?,
+            )),
+            MAGIC_NACK => Some(Self::ConnectNack(ConnectNack::from_bytes(&bytes)?)),
+            MAGIC_DISCONNECT => Some(Self::DisconnectInterlink(DisconnectInterlink::from_bytes(
+                &bytes,
+            )?)),
+            _ => None,
+        }
+    }
+}
+
+define_message!(VoiceFull, 54);
 impl_stream_id!(VoiceFull, 4);
 impl_link_setup!(VoiceFull, 6);
 impl_frame_number!(VoiceFull, 34);
 impl_payload!(VoiceFull, 36, 52);
 impl_trailing_crc_verify!(VoiceFull);
 
-pub struct VoiceHeader(pub [u8; 36]);
+define_message!(VoiceHeader, 36);
 impl_stream_id!(VoiceHeader, 4);
 impl_link_setup!(VoiceHeader, 6);
 impl_trailing_crc_verify!(VoiceHeader);
 
-pub struct VoiceData(pub [u8; 26]);
+define_message!(VoiceData, 26);
 impl_stream_id!(VoiceData, 4);
 impl_frame_number!(VoiceData, 6);
 impl_payload!(VoiceData, 8, 24);
 impl_trailing_crc_verify!(VoiceData);
 
-pub struct Packet(pub [u8; 859]);
+define_message!(Packet, 859);
 impl_link_setup_frame!(Packet, 4);
 
 impl Packet {
@@ -236,33 +338,42 @@ impl Packet {
     }
 }
 
-pub struct Pong(pub [u8; 10]);
+define_message!(Pong, 10);
 impl_address!(Pong, 4);
+no_crc!(Pong);
 
-pub struct Connect(pub [u8; 11]);
+define_message!(Connect, 11);
 impl_address!(Connect, 4);
 impl_module!(Connect, 10);
+no_crc!(Connect);
 
-pub struct Listen(pub [u8; 11]);
+define_message!(Listen, 11);
 impl_address!(Listen, 4);
 impl_module!(Listen, 10);
+no_crc!(Listen);
 
-pub struct Disconnect(pub [u8; 10]);
+define_message!(Disconnect, 10);
 impl_address!(Disconnect, 4);
+no_crc!(Disconnect);
 
-pub struct Ping(pub [u8; 10]);
+define_message!(Ping, 10);
 impl_address!(Ping, 4);
+no_crc!(Ping);
 
-pub struct DisconnectAcknowledge(pub [u8; 4]);
+define_message!(DisconnectAcknowledge, 4);
+no_crc!(DisconnectAcknowledge);
 
-pub struct ForceDisconnect(pub [u8; 10]);
+define_message!(ForceDisconnect, 10);
 impl_address!(ForceDisconnect, 4);
+no_crc!(ForceDisconnect);
 
-pub struct ConnectAcknowledge(pub [u8; 4]);
+define_message!(ConnectAcknowledge, 4);
+no_crc!(ConnectAcknowledge);
 
-pub struct ConnectNack(pub [u8; 4]);
+define_message!(ConnectNack, 4);
+no_crc!(ConnectNack);
 
-pub struct VoiceInterlink(pub [u8; 55]);
+define_message!(VoiceInterlink, 55);
 impl_stream_id!(VoiceInterlink, 4);
 impl_link_setup!(VoiceInterlink, 6);
 impl_frame_number!(VoiceInterlink, 34);
@@ -270,20 +381,20 @@ impl_payload!(VoiceInterlink, 36, 52);
 impl_internal_crc!(VoiceInterlink, 0, 54);
 impl_is_relayed!(VoiceInterlink);
 
-pub struct VoiceHeaderInterlink(pub [u8; 37]);
+define_message!(VoiceHeaderInterlink, 37);
 impl_stream_id!(VoiceHeaderInterlink, 4);
 impl_link_setup!(VoiceHeaderInterlink, 6);
 impl_internal_crc!(VoiceHeaderInterlink, 0, 36);
 impl_is_relayed!(VoiceHeaderInterlink);
 
-pub struct VoiceDataInterlink(pub [u8; 27]);
+define_message!(VoiceDataInterlink, 27);
 impl_stream_id!(VoiceDataInterlink, 4);
 impl_frame_number!(VoiceDataInterlink, 6);
 impl_payload!(VoiceDataInterlink, 8, 24);
 impl_internal_crc!(VoiceDataInterlink, 0, 24);
 impl_is_relayed!(VoiceDataInterlink);
 
-pub struct PacketInterlink(pub [u8; 860]);
+define_message!(PacketInterlink, 860);
 impl_link_setup_frame!(PacketInterlink, 4);
 impl_is_relayed!(PacketInterlink);
 
@@ -299,13 +410,16 @@ impl PacketInterlink {
     }
 }
 
-pub struct ConnectInterlink(pub [u8; 37]);
+define_message!(ConnectInterlink, 37);
 impl_address!(ConnectInterlink, 4);
 impl_modules!(ConnectInterlink, 10, 37);
+no_crc!(ConnectInterlink);
 
-pub struct ConnectInterlinkAcknowledge(pub [u8; 37]);
+define_message!(ConnectInterlinkAcknowledge, 37);
 impl_address!(ConnectInterlinkAcknowledge, 4);
 impl_modules!(ConnectInterlinkAcknowledge, 10, 37);
+no_crc!(ConnectInterlinkAcknowledge);
 
-pub struct DisconnectInterlink(pub [u8; 10]);
+define_message!(DisconnectInterlink, 10);
 impl_address!(DisconnectInterlink, 4);
+no_crc!(DisconnectInterlink);
