@@ -12,6 +12,9 @@ use m17app::error::AdapterError;
 use m17app::link_setup::LinkSetup;
 use m17app::link_setup::M17Address;
 use m17app::StreamFrame;
+use rubato::Resampler;
+use rubato::SincFixedIn;
+use rubato::SincInterpolationParameters;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write;
@@ -25,6 +28,10 @@ use std::time::Duration;
 use std::time::Instant;
 use thiserror::Error;
 
+pub mod soundcards;
+
+/// Write one or more 8-byte chunks of 3200-bit Codec2 to a raw S16LE file
+/// and return the samples.
 pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
     let codec2 = Codec2::new(Codec2Mode::MODE_3200);
     let var_name = codec2;
@@ -35,8 +42,6 @@ pub fn decode_codec2<P: AsRef<Path>>(data: &[u8], out_path: P) -> Vec<i16> {
         codec.decode(&mut samples, &data[i * 8..((i + 1) * 8)]);
         all_samples.append(&mut samples);
     }
-
-    // dude this works
     let mut speech_out = File::create(out_path).unwrap();
     for b in &all_samples {
         speech_out.write_all(&b.to_le_bytes()).unwrap();
@@ -58,8 +63,8 @@ impl Codec2Adapter {
                 out_buf: VecDeque::new(),
                 codec2: Codec2::new(Codec2Mode::MODE_3200),
                 end_tx: None,
+                resampler: None,
             })),
-            // TODO: this doesn't work on rpi. Use default_output_device() by default
             output_card: None,
         }
     }
@@ -81,6 +86,7 @@ struct AdapterState {
     out_buf: VecDeque<i16>,
     codec2: Codec2,
     end_tx: Option<Sender<()>>,
+    resampler: Option<SincFixedIn<f32>>,
 }
 
 impl StreamAdapter for Codec2Adapter {
@@ -94,7 +100,21 @@ impl StreamAdapter for Codec2Adapter {
         std::thread::spawn(move || stream_thread(end_rx, setup_tx, state, output_card));
         self.state.lock().unwrap().end_tx = Some(end_tx);
         // Propagate any errors arising in the thread
-        setup_rx.recv()?
+        let sample_rate = setup_rx.recv()??;
+        debug!("selected codec2 output sample rate {sample_rate}");
+        if sample_rate != 8000 {
+            let params = SincInterpolationParameters {
+                sinc_len: 256,
+                f_cutoff: 0.95,
+                oversampling_factor: 256,
+                interpolation: rubato::SincInterpolationType::Cubic,
+                window: rubato::WindowFunction::BlackmanHarris2,
+            };
+            // TODO: fix unwrap
+            self.state.lock().unwrap().resampler =
+                Some(SincFixedIn::new(sample_rate as f64 / 8000f64, 1.0, params, 160, 1).unwrap());
+        }
+        Ok(())
     }
 
     fn close(&self) -> Result<(), AdapterError> {
@@ -116,12 +136,21 @@ impl StreamAdapter for Codec2Adapter {
     fn stream_data(&self, _frame_number: u16, _is_final: bool, data: Arc<[u8; 16]>) {
         let mut state = self.state.lock().unwrap();
         for encoded in data.chunks(8) {
-            if state.out_buf.len() < 1024 {
+            if state.out_buf.len() < 8192 {
                 let mut samples = [i16::EQUILIBRIUM; 160]; // while assuming 3200
                 state.codec2.decode(&mut samples, encoded);
-                // TODO: maybe get rid of VecDeque so we can decode directly into ring buffer?
-                for s in samples {
-                    state.out_buf.push_back(s);
+                if let Some(resampler) = state.resampler.as_mut() {
+                    let samples_f: Vec<f32> =
+                        samples.iter().map(|s| *s as f32 / 16384.0f32).collect();
+                    let res = resampler.process(&vec![samples_f], None).unwrap();
+                    for s in &res[0] {
+                        state.out_buf.push_back((s * 16383.0f32) as i16);
+                    }
+                } else {
+                    // TODO: maybe get rid of VecDeque so we can decode directly into ring buffer?
+                    for s in samples {
+                        state.out_buf.push_back(s);
+                    }
                 }
             } else {
                 debug!("out_buf overflow");
@@ -130,17 +159,17 @@ impl StreamAdapter for Codec2Adapter {
     }
 }
 
-fn output_cb(data: &mut [i16], state: &Mutex<AdapterState>) {
+fn output_cb(data: &mut [i16], state: &Mutex<AdapterState>, channels: u16) {
     let mut state = state.lock().unwrap();
-    for d in data {
-        *d = state.out_buf.pop_front().unwrap_or(i16::EQUILIBRIUM);
+    for d in data.chunks_mut(channels as usize) {
+        d.fill(state.out_buf.pop_front().unwrap_or(i16::EQUILIBRIUM));
     }
 }
 
 /// Create and manage the stream from a dedicated thread since it's `!Send`
 fn stream_thread(
     end: Receiver<()>,
-    setup_tx: Sender<Result<(), AdapterError>>,
+    setup_tx: Sender<Result<u32, AdapterError>>,
     state: Arc<Mutex<AdapterState>>,
     output_card: Option<String>,
 ) {
@@ -177,10 +206,9 @@ fn stream_thread(
             return;
         }
     };
-    // TODO: channels == 1 doesn't work on a Raspberry Pi
-    // make this configurable and support interleaving LRLR stereo samples if using 2 channels
-    let config = match configs.find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
-    {
+    let config = match configs.find(|c| {
+        (c.channels() == 1 || c.channels() == 2) && c.sample_format() == SampleFormat::I16
+    }) {
         Some(c) => c,
         None => {
             let _ = setup_tx.send(Err(
@@ -190,11 +218,19 @@ fn stream_thread(
         }
     };
 
-    let config = config.with_sample_rate(SampleRate(8000));
+    let target_sample_rate =
+        if config.min_sample_rate().0 <= 8000 && config.max_sample_rate().0 >= 8000 {
+            8000
+        } else {
+            config.max_sample_rate().0
+        };
+    let channels = config.channels();
+
+    let config = config.with_sample_rate(SampleRate(target_sample_rate));
     let stream = match device.build_output_stream(
         &config.into(),
         move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
-            output_cb(data, &state);
+            output_cb(data, &state, channels);
         },
         |e| {
             // trigger end_tx here? always more edge cases
@@ -219,7 +255,7 @@ fn stream_thread(
             return;
         }
     }
-    let _ = setup_tx.send(Ok(()));
+    let _ = setup_tx.send(Ok(target_sample_rate));
     let _ = end.recv();
     // it seems concrete impls of Stream have a Drop implementation that will handle termination
 }

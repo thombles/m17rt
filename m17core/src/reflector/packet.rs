@@ -1,5 +1,4 @@
-// Based on https://github.com/n7tae/mrefd/blob/master/Packet-Description.md
-// and the main M17 specification
+//! UDP datagrams and binary encoding/decoding for client-reflector and reflector-reflector communication.
 
 use crate::address::Address;
 use crate::protocol::LsfFrame;

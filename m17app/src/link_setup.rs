@@ -79,7 +79,7 @@ impl M17Address {
         Ok(Self(Address::Callsign(Callsign(address))))
     }
 
-    pub(crate) fn address(&self) -> &Address {
+    pub fn address(&self) -> &Address {
         &self.0
     }
 }
