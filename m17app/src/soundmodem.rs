@@ -1,12 +1,13 @@
 use crate::error::{M17Error, SoundmodemError};
 use crate::tnc::{Tnc, TncError};
+use crate::util::out_buffer::OutBuffer;
 use m17core::kiss::MAX_FRAME_LEN;
 use m17core::modem::{Demodulator, Modulator, ModulatorAction, SoftDemodulator, SoftModulator};
 use m17core::tnc::SoftTnc;
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::fs::File;
-use std::io::{self, ErrorKind, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TryRecvError};
 use std::sync::RwLock;
@@ -16,8 +17,7 @@ use thiserror::Error;
 
 pub struct Soundmodem {
     event_tx: SyncSender<SoundmodemEvent>,
-    kiss_out_rx: Arc<Mutex<Receiver<Arc<[u8]>>>>,
-    partial_kiss_out: Arc<Mutex<Option<PartialKissOut>>>,
+    kiss_out: OutBuffer,
 }
 
 impl Soundmodem {
@@ -40,8 +40,7 @@ impl Soundmodem {
         );
         Self {
             event_tx,
-            kiss_out_rx: Arc::new(Mutex::new(kiss_out_rx)),
-            partial_kiss_out: Arc::new(Mutex::new(None)),
+            kiss_out: OutBuffer::new(kiss_out_rx),
         }
     }
 }
@@ -154,42 +153,9 @@ impl SoundmodemErrorSender {
     }
 }
 
-struct PartialKissOut {
-    output: Arc<[u8]>,
-    idx: usize,
-}
-
 impl Read for Soundmodem {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        {
-            let mut partial_kiss_out = self.partial_kiss_out.lock().unwrap();
-            if let Some(partial) = partial_kiss_out.as_mut() {
-                let remaining = partial.output.len() - partial.idx;
-                let to_write = remaining.min(buf.len());
-                buf[0..to_write]
-                    .copy_from_slice(&partial.output[partial.idx..(partial.idx + to_write)]);
-                if to_write == remaining {
-                    *partial_kiss_out = None;
-                } else {
-                    partial.idx += to_write;
-                }
-                return Ok(to_write);
-            }
-        }
-        let output = {
-            let rx = self.kiss_out_rx.lock().unwrap();
-            rx.recv()
-                .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))?
-        };
-        let to_write = output.len().min(buf.len());
-        buf[0..to_write].copy_from_slice(&output[0..to_write]);
-        if to_write != output.len() {
-            *self.partial_kiss_out.lock().unwrap() = Some(PartialKissOut {
-                output,
-                idx: to_write,
-            })
-        }
-        Ok(to_write)
+        self.kiss_out.read(buf)
     }
 }
 
@@ -208,8 +174,7 @@ impl Tnc for Soundmodem {
     fn try_clone(&mut self) -> Result<Self, TncError> {
         Ok(Self {
             event_tx: self.event_tx.clone(),
-            kiss_out_rx: self.kiss_out_rx.clone(),
-            partial_kiss_out: self.partial_kiss_out.clone(),
+            kiss_out: self.kiss_out.clone(),
         })
     }
 

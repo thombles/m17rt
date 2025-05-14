@@ -9,6 +9,7 @@ pub mod serial;
 pub mod soundcard;
 pub mod soundmodem;
 pub mod tnc;
+pub mod util;
 
 #[cfg(test)]
 mod test_util;
