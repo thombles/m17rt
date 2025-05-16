@@ -56,3 +56,65 @@ impl VoiceToRf {
         (lsf, stream)
     }
 }
+
+/// Accepts LSF and stream RF payloads and merges them into `Voice` packets for reflector use.
+///
+/// For a series of transmissions this object should be re-used so that Stream ID is correctly
+/// changed after each new LSF.
+pub struct RfToVoice {
+    lsf: LsfFrame,
+    stream_id: u16,
+}
+
+impl RfToVoice {
+    pub fn new(lsf: LsfFrame) -> Self {
+        Self { lsf, stream_id: 0 }
+    }
+
+    pub fn process_lsf(&mut self, lsf: LsfFrame) {
+        self.lsf = lsf;
+        self.stream_id = self.stream_id.wrapping_add(1);
+    }
+
+    pub fn process_stream(&self, stream: &StreamFrame) -> Voice {
+        let mut v = Voice::new();
+        v.set_stream_id(self.stream_id);
+        v.set_frame_number(stream.frame_number);
+        v.set_end_of_stream(stream.end_of_stream);
+        v.set_payload(&stream.stream_data);
+        v.set_link_setup_frame(&self.lsf);
+        v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        address::{Address, Callsign},
+        protocol::{LsfFrame, StreamFrame},
+    };
+
+    use super::{RfToVoice, VoiceToRf};
+
+    #[test]
+    fn convert_roundtrip() {
+        let lsf = LsfFrame::new_voice(
+            &Address::Callsign(Callsign(*b"VK7XT    ")),
+            &Address::Broadcast,
+        );
+        let stream = StreamFrame {
+            lich_idx: 0,
+            lich_part: lsf.0[0..5].try_into().unwrap(),
+            frame_number: 0,
+            end_of_stream: false,
+            stream_data: [1u8; 16],
+        };
+        let rf_to_voice = RfToVoice::new(lsf.clone());
+        let voice = rf_to_voice.process_stream(&stream);
+
+        let mut voice_to_rf = VoiceToRf::new();
+        let (lsf2, stream2) = voice_to_rf.next(&voice);
+        assert_eq!(lsf2, Some(lsf));
+        assert_eq!(stream2, stream);
+    }
+}
