@@ -222,7 +222,7 @@ fn stream_thread(
         if config.min_sample_rate().0 <= 8000 && config.max_sample_rate().0 >= 8000 {
             8000
         } else {
-            config.max_sample_rate().0
+            config.min_sample_rate().0
         };
     let channels = config.channels();
 
