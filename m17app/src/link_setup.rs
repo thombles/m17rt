@@ -52,7 +52,7 @@ impl LinkSetup {
 
 /// Station address. High level version of `Address` from core.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct M17Address(Address);
 
 impl M17Address {
