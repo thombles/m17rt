@@ -106,7 +106,7 @@ impl StreamAdapter for Codec2Adapter {
             let params = SincInterpolationParameters {
                 sinc_len: 256,
                 f_cutoff: 0.95,
-                oversampling_factor: 256,
+                oversampling_factor: 128,
                 interpolation: rubato::SincInterpolationType::Cubic,
                 window: rubato::WindowFunction::BlackmanHarris2,
             };
