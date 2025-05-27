@@ -3,7 +3,7 @@ use m17app::link_setup::M17Address;
 use m17app::serial::{PttPin, SerialPtt};
 use m17app::soundcard::Soundcard;
 use m17app::soundmodem::{NullErrorHandler, Soundmodem};
-use m17codec2::WavePlayer;
+use m17codec2::tx::WavePlayer;
 use std::path::PathBuf;
 
 pub fn mod_test() {

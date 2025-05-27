@@ -50,7 +50,6 @@ impl Codec2RxAdapter {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(AdapterState {
-                tx: None,
                 out_buf: VecDeque::new(),
                 codec2: Codec2::new(Codec2Mode::MODE_3200),
                 end_tx: None,
@@ -72,7 +71,6 @@ impl Default for Codec2RxAdapter {
 }
 
 struct AdapterState {
-    tx: Option<TxHandle>,
     /// Circular buffer of output samples for playback
     out_buf: VecDeque<i16>,
     codec2: Codec2,
@@ -81,9 +79,7 @@ struct AdapterState {
 }
 
 impl StreamAdapter for Codec2RxAdapter {
-    fn start(&self, handle: TxHandle) -> Result<(), AdapterError> {
-        self.state.lock().unwrap().tx = Some(handle);
-
+    fn start(&self, _handle: TxHandle) -> Result<(), AdapterError> {
         let (end_tx, end_rx) = channel();
         let (setup_tx, setup_rx) = channel();
         let state = self.state.clone();
@@ -92,7 +88,7 @@ impl StreamAdapter for Codec2RxAdapter {
         self.state.lock().unwrap().end_tx = Some(end_tx);
         // Propagate any errors arising in the thread
         let sample_rate = setup_rx.recv()??;
-        debug!("selected codec2 output sample rate {sample_rate}");
+        debug!("selected codec2 speaker sample rate {sample_rate}");
         if sample_rate != 8000 {
             let params = SincInterpolationParameters {
                 sinc_len: 256,
@@ -110,7 +106,6 @@ impl StreamAdapter for Codec2RxAdapter {
 
     fn close(&self) -> Result<(), AdapterError> {
         let mut state = self.state.lock().unwrap();
-        state.tx = None;
         state.end_tx = None;
         Ok(())
     }
