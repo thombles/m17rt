@@ -83,6 +83,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ascii_table"
+version = "4.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb3cd3541590f14025990035bb02b205870f8ca3f5297956dd2c6b32e6470fa1"
+
+[[package]]
 name = "autocfg"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -522,7 +528,9 @@ dependencies = [
 name = "m17rt-soundcards"
 version = "0.1.0"
 dependencies = [
+ "ascii_table",
  "m17app",
+ "m17codec2",
 ]
 
 [[package]]

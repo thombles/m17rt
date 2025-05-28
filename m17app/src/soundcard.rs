@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     sync::{
         mpsc::{sync_channel, Receiver, SyncSender},
         Arc, RwLock,
@@ -9,7 +10,7 @@ use std::{
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     BuildStreamError, DevicesError, PlayStreamError, SampleFormat, SampleRate, Stream, StreamError,
-    SupportedStreamConfigsError,
+    SupportedStreamConfigRange, SupportedStreamConfigsError,
 };
 use thiserror::Error;
 
@@ -17,6 +18,13 @@ use crate::soundmodem::{
     InputSource, OutputBuffer, OutputSink, SoundmodemErrorSender, SoundmodemEvent,
 };
 
+/// A soundcard for used for transmitting/receiving baseband with a `Soundmodem`.
+///
+/// Use `input()` and `output()` to retrieve source/sink handles for the soundmodem.
+/// It is fine to use an input from one soundcard and and output from another.
+///
+/// If you try to create more than one `Soundcard` instance at a time for the same card
+/// then it may not work.
 pub struct Soundcard {
     event_tx: SyncSender<SoundcardEvent>,
 }
@@ -53,6 +61,9 @@ impl Soundcard {
         let _ = self.event_tx.send(SoundcardEvent::SetTxInverted(inverted));
     }
 
+    /// List soundcards supported for soundmodem output.
+    ///
+    /// Today, this requires support for a 48kHz sample rate.
     pub fn supported_output_cards() -> Vec<String> {
         let mut out = vec![];
         let host = cpal::default_host();
@@ -63,9 +74,7 @@ impl Soundcard {
             let Ok(mut configs) = d.supported_output_configs() else {
                 continue;
             };
-            if configs
-                .any(|config| config.channels() == 1 && config.sample_format() == SampleFormat::I16)
-            {
+            if configs.any(config_is_compatible) {
                 let Ok(name) = d.name() else {
                     continue;
                 };
@@ -76,6 +85,9 @@ impl Soundcard {
         out
     }
 
+    /// List soundcards supported for soundmodem input.
+    ///
+    /// Today, this requires support for a 48kHz sample rate.
     pub fn supported_input_cards() -> Vec<String> {
         let mut out = vec![];
         let host = cpal::default_host();
@@ -86,9 +98,7 @@ impl Soundcard {
             let Ok(mut configs) = d.supported_input_configs() else {
                 continue;
             };
-            if configs
-                .any(|config| config.channels() == 1 && config.sample_format() == SampleFormat::I16)
-            {
+            if configs.any(config_is_compatible) {
                 let Ok(name) = d.name() else {
                     continue;
                 };
@@ -98,6 +108,14 @@ impl Soundcard {
         out.sort();
         out
     }
+}
+
+fn config_is_compatible<C: Borrow<SupportedStreamConfigRange>>(config: C) -> bool {
+    let config = config.borrow();
+    (config.channels() == 1 || config.channels() == 2)
+        && config.sample_format() == SampleFormat::I16
+        && config.min_sample_rate().0 <= 48000
+        && config.max_sample_rate().0 >= 48000
 }
 
 enum SoundcardEvent {
@@ -189,9 +207,7 @@ fn spawn_soundcard_worker(
                             continue;
                         }
                     };
-                    let input_config = match input_configs
-                        .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
-                    {
+                    let input_config = match input_configs.find(|c| config_is_compatible(c)) {
                         Some(c) => c,
                         None => {
                             errors.send_error(SoundcardError::NoValidConfigAvailable);
@@ -199,14 +215,20 @@ fn spawn_soundcard_worker(
                         }
                     };
                     let input_config = input_config.with_sample_rate(SampleRate(48000));
+                    let channels = input_config.channels();
                     let errors_1 = errors.clone();
                     let stream = match device.build_input_stream(
                         &input_config.into(),
                         move |data: &[i16], _info: &cpal::InputCallbackInfo| {
-                            let out: Vec<i16> = data
-                                .iter()
-                                .map(|s| if rx_inverted { s.saturating_neg() } else { *s })
-                                .collect();
+                            let mut out = vec![];
+                            for d in data.chunks(channels as usize) {
+                                // if we were given multi-channel input we'll pick the first channel
+                                let mut sample = d[0];
+                                if rx_inverted {
+                                    sample = sample.saturating_neg();
+                                }
+                                out.push(sample);
+                            }
                             let _ = samples.try_send(SoundmodemEvent::BasebandInput(out.into()));
                         },
                         move |e| {
@@ -241,9 +263,7 @@ fn spawn_soundcard_worker(
                             continue;
                         }
                     };
-                    let output_config = match output_configs
-                        .find(|c| c.channels() == 1 && c.sample_format() == SampleFormat::I16)
-                    {
+                    let output_config = match output_configs.find(|c| config_is_compatible(c)) {
                         Some(c) => c,
                         None => {
                             errors.send_error(SoundcardError::NoValidConfigAvailable);
@@ -251,6 +271,7 @@ fn spawn_soundcard_worker(
                         }
                     };
                     let output_config = output_config.with_sample_rate(SampleRate(48000));
+                    let channels = output_config.channels();
                     let errors_1 = errors.clone();
                     let stream = match device.build_output_stream(
                         &output_config.into(),
@@ -263,12 +284,12 @@ fn spawn_soundcard_worker(
                                 .unwrap_or(Duration::ZERO);
                             let mut buffer = buffer.write().unwrap();
                             buffer.latency = latency;
-                            for out in data.iter_mut() {
+                            for out in data.chunks_mut(channels as usize) {
                                 if let Some(s) = buffer.samples.pop_front() {
-                                    *out = if tx_inverted { s.saturating_neg() } else { s };
+                                    out.fill(if tx_inverted { s.saturating_neg() } else { s });
                                     taken += 1;
                                 } else if buffer.idling {
-                                    *out = 0;
+                                    out.fill(0);
                                 } else {
                                     let _ = event_tx.send(SoundmodemEvent::OutputUnderrun);
                                     break;

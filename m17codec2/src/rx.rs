@@ -62,6 +62,33 @@ impl Codec2RxAdapter {
     pub fn set_output_card<S: Into<String>>(&mut self, card_name: S) {
         self.output_card = Some(card_name.into());
     }
+
+    /// List sound cards supported for audio output.
+    ///
+    /// M17RT will handle any card with 1 or 2 channels and 16-bit output.
+    pub fn supported_output_cards() -> Vec<String> {
+        let mut out = vec![];
+        let host = cpal::default_host();
+        let Ok(output_devices) = host.output_devices() else {
+            return out;
+        };
+        for d in output_devices {
+            let Ok(mut configs) = d.supported_output_configs() else {
+                continue;
+            };
+            if configs.any(|config| {
+                (config.channels() == 1 || config.channels() == 2)
+                    && config.sample_format() == SampleFormat::I16
+            }) {
+                let Ok(name) = d.name() else {
+                    continue;
+                };
+                out.push(name);
+            }
+        }
+        out.sort();
+        out
+    }
 }
 
 impl Default for Codec2RxAdapter {

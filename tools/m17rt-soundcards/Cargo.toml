@@ -8,3 +8,6 @@ publish = false
 
 [dependencies]
 m17app = { path = "../../m17app" }
+m17codec2 = { path = "../../m17codec2" }
+
+ascii_table = "4.0.7"
