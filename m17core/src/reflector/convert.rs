@@ -62,6 +62,7 @@ impl VoiceToRf {
 ///
 /// For a series of transmissions this object should be re-used so that Stream ID is correctly
 /// changed after each new LSF.
+#[derive(Debug, Clone)]
 pub struct RfToVoice {
     lsf: LsfFrame,
     stream_id: u16,
