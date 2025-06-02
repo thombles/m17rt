@@ -114,10 +114,7 @@ pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<LsfFrame> {
 pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame> {
     let deinterleaved = frame_initial_decode(frame);
     let stream_part = &deinterleaved[12..];
-    let stream = match fec::decode(stream_part, 144, p_2) {
-        Some(stream) => stream,
-        None => return None,
-    };
+    let stream = fec::decode(stream_part, 144, p_2)?;
     let frame_num = u16::from_be_bytes([stream[0], stream[1]]);
     let eos = (frame_num & 0x8000) > 0;
     let frame_num = frame_num & 0x7fff; // higher layer has to handle wraparound
@@ -142,10 +139,7 @@ pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame
 
 pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame> {
     let deinterleaved = frame_initial_decode(frame);
-    let packet = match fec::decode(&deinterleaved, 206, p_3) {
-        Some(packet) => packet,
-        None => return None,
-    };
+    let packet = fec::decode(&deinterleaved, 206, p_3)?;
     let final_frame = (packet[25] & 0x80) > 0;
     let number = (packet[25] >> 2) & 0x1f;
     let counter = if final_frame {

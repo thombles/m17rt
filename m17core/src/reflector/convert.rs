@@ -7,6 +7,7 @@ use super::packet::Voice;
 /// Accepts `Voice` packets from a reflector and turns them into LSF and Stream frames.
 ///
 /// This is the format required for the voice data to cross the KISS protocol boundary.
+#[derive(Debug, Default)]
 pub struct VoiceToRf {
     /// Link Setup most recently acquired
     lsf: Option<LsfFrame>,
