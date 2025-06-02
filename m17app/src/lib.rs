@@ -4,6 +4,7 @@ pub mod adapter;
 pub mod app;
 pub mod error;
 pub mod link_setup;
+pub mod reflector;
 pub mod rtlsdr;
 pub mod serial;
 pub mod soundcard;
