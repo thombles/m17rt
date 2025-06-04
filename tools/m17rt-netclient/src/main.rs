@@ -117,7 +117,7 @@ struct ConsoleAdapter;
 impl StreamAdapter for ConsoleAdapter {
     fn stream_began(&self, link_setup: m17app::link_setup::LinkSetup) {
         println!(
-            "Transmission begins. From: {} To: {}",
+            "Incoming transmission begins. From: {} To: {}",
             link_setup.source(),
             link_setup.destination()
         );
@@ -125,7 +125,7 @@ impl StreamAdapter for ConsoleAdapter {
 
     fn stream_data(&self, _frame_number: u16, is_final: bool, _data: Arc<[u8; 16]>) {
         if is_final {
-            println!("Transmission ends.");
+            println!("Incoming transmission ends.");
         }
     }
 }
