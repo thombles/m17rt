@@ -1,7 +1,7 @@
 [package]
 name = "m17rt-demod"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
 publish = false
@@ -11,6 +11,5 @@ m17core = { path = "../../m17core" }
 m17app = { path = "../../m17app" }
 m17codec2 = { path = "../../m17codec2" }
 
-cpal = "0.15.3"
 env_logger = "0.11.6"
 log = "0.4.22"

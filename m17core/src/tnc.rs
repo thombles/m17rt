@@ -130,7 +130,7 @@ impl SoftTnc {
             }
             Frame::Packet(packet) => {
                 match &mut self.state {
-                    State::RxPacket(ref mut rx) => {
+                    State::RxPacket(rx) => {
                         match packet.counter {
                             PacketFrameCounter::Frame { index } => {
                                 if index == rx.count && index < 32 {
@@ -164,7 +164,7 @@ impl SoftTnc {
             }
             Frame::Stream(stream) => {
                 match &mut self.state {
-                    State::RxStream(ref mut rx) => {
+                    State::RxStream(rx) => {
                         // TODO: consider wraparound from 0x7fff
                         if stream.frame_number < rx.index {
                             let mut lich = LichCollection::new();
@@ -181,7 +181,7 @@ impl SoftTnc {
                             }
                         }
                     }
-                    State::RxAcquiringStream(ref mut rx) => {
+                    State::RxAcquiringStream(rx) => {
                         rx.lich.set_segment(stream.lich_idx, stream.lich_part);
                         if let Some(maybe_lsf) = rx.lich.try_assemble() {
                             let lsf = LsfFrame(maybe_lsf);
