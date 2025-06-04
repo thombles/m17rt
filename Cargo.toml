@@ -2,4 +2,4 @@
 resolver = "2"
 members = [
     "m17app", "m17codec2", "m17core", "tools/m17rt-demod", "tools/m17rt-mod", "tools/m17rt-txpacket", "tools/m17rt-rxpacket", "tools/m17rt-soundcards"
-]
+, "tools/m17rt-netclient"]

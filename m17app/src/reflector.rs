@@ -22,10 +22,10 @@ use m17core::{
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ReflectorClientConfig {
-    hostname: String,
-    port: u16,
-    module: char,
-    local_callsign: M17Address,
+    pub hostname: String,
+    pub port: u16,
+    pub module: char,
+    pub local_callsign: M17Address,
 }
 
 type WrappedStatusHandler = Arc<Mutex<dyn StatusHandler + Send + 'static>>;

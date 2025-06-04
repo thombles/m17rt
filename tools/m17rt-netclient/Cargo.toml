@@ -1,0 +1,12 @@
+[package]
+name = "m17rt-netclient"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
+publish = false
+
+[dependencies]
+clap = "4.5.39"
+m17app = { path = "../../m17app" }
+m17codec2 = { path = "../../m17codec2" }
