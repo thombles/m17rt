@@ -494,7 +494,6 @@ dependencies = [
 name = "m17rt-demod"
 version = "0.1.0"
 dependencies = [
- "cpal",
  "env_logger",
  "log",
  "m17app",
@@ -517,7 +516,6 @@ dependencies = [
 name = "m17rt-rxpacket"
 version = "0.1.0"
 dependencies = [
- "cpal",
  "env_logger",
  "log",
  "m17app",
