@@ -11,9 +11,7 @@ pub enum M17Error {
     #[error("given callsign is {0} characters long; maximum is 9")]
     CallsignTooLong(usize),
 
-    #[error(
-        "provided packet payload is too large: provided {provided} bytes, capacity {capacity}"
-    )]
+    #[error("provided packet payload is too large: provided {provided} bytes, capacity {capacity}")]
     PacketTooLarge { provided: usize, capacity: usize },
 
     #[error("provided path to RRC file could not be opened: {0}")]

@@ -17,8 +17,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{
-    mpsc::{channel, Receiver, Sender},
     Arc, Mutex,
+    mpsc::{Receiver, Sender, channel},
 };
 
 /// Write one or more 8-byte chunks of 3200-bit Codec2 to a raw S16LE file

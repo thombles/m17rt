@@ -14,7 +14,9 @@ pub enum M17Codec2Error {
     #[error("selected card '{0}' failed to list available output configs: '{1}'")]
     OutputConfigsUnavailable(String, #[source] cpal::SupportedStreamConfigsError),
 
-    #[error("selected card '{0}' did not offer a compatible output config type, either due to hardware limitations or because it is currently in use")]
+    #[error(
+        "selected card '{0}' did not offer a compatible output config type, either due to hardware limitations or because it is currently in use"
+    )]
     SupportedOutputUnavailable(String),
 
     #[error("selected card '{0}' was unable to build an output stream: '{1}'")]
@@ -26,7 +28,9 @@ pub enum M17Codec2Error {
     #[error("selected card '{0}' failed to list available input configs: '{1}'")]
     InputConfigsUnavailable(String, #[source] cpal::SupportedStreamConfigsError),
 
-    #[error("selected card '{0}' did not offer a compatible input config type, either due to hardware limitations or because it is currently in use")]
+    #[error(
+        "selected card '{0}' did not offer a compatible input config type, either due to hardware limitations or because it is currently in use"
+    )]
     SupportedInputUnavailable(String),
 
     #[error("selected card '{0}' was unable to build an input stream: '{1}'")]

@@ -70,7 +70,9 @@ pub struct RfToVoice {
 
 impl RfToVoice {
     pub fn new(lsf: LsfFrame) -> Self {
-        Self { lsf, stream_id: 0 }
+        // no_std "random"
+        let stream_id = &lsf as *const LsfFrame as u16;
+        Self { lsf, stream_id }
     }
 
     pub fn process_lsf(&mut self, lsf: LsfFrame) {

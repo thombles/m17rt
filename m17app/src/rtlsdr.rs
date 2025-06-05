@@ -1,7 +1,7 @@
 use std::{
     io::Read,
     process::{Child, Command, Stdio},
-    sync::{mpsc::SyncSender, Mutex},
+    sync::{Mutex, mpsc::SyncSender},
 };
 
 use crate::{

@@ -1,9 +1,9 @@
+use m17app::PacketType;
 use m17app::adapter::PacketAdapter;
 use m17app::app::M17App;
 use m17app::link_setup::LinkSetup;
 use m17app::soundcard::Soundcard;
 use m17app::soundmodem::{NullErrorHandler, NullOutputSink, NullPtt, Soundmodem};
-use m17app::PacketType;
 use std::sync::Arc;
 
 fn main() {

@@ -1,5 +1,5 @@
 use crate::{
-    address::{encode_address, Address},
+    address::{Address, encode_address},
     bits::BitsMut,
 };
 

@@ -35,6 +35,14 @@ fn main() {
                 .help("Your callsign for reflector registration and transmissions"),
         )
         .arg(
+            Arg::new("reflector")
+                .long("reflector")
+                .short('r')
+                .value_parser(valid_callsign)
+                .required(true)
+                .help("Reflector designator/callsign, often starting with 'M17-'"),
+        )
+        .arg(
             Arg::new("module")
                 .long("module")
                 .short('m')
@@ -59,11 +67,20 @@ fn main() {
     let hostname = args.get_one::<String>("hostname").unwrap();
     let port = args.get_one::<u16>("port").unwrap();
     let callsign = args.get_one::<M17Address>("callsign").unwrap();
+    let reflector = args.get_one::<M17Address>("reflector").unwrap();
     let module = args.get_one::<char>("module").unwrap();
     let input = args.get_one::<String>("input");
     let output = args.get_one::<String>("output");
 
-    let mut tx = Codec2TxAdapter::new(callsign.clone(), M17Address::new_broadcast());
+    let ref_with_mod = format!("{} {}", reflector, module);
+    let Ok(reflector) = M17Address::from_callsign(&ref_with_mod) else {
+        println!(
+            "Unable to create valid destination address for reflector + callsign '{ref_with_mod}'"
+        );
+        std::process::exit(1);
+    };
+
+    let mut tx = Codec2TxAdapter::new(callsign.clone(), reflector);
     if let Some(input) = input {
         tx.set_input_card(input);
     }

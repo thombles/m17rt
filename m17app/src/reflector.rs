@@ -2,9 +2,9 @@ use std::{
     io::{self, Read, Write},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -79,8 +79,9 @@ impl Write for ReflectorClientTnc {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut kiss = self.kiss_buffer.lock().unwrap();
         let rem = kiss.buf_remaining();
-        let sz = buf.len().max(rem.len());
+        let sz = buf.len().min(rem.len());
         rem[0..sz].copy_from_slice(&buf[0..sz]);
+        kiss.did_write(sz);
         if let Some(frame) = kiss.next_frame() {
             if Ok(KissCommand::DataFrame) == frame.command() && frame.port() == Ok(PORT_STREAM) {
                 let mut payload = [0u8; 30];
@@ -196,6 +197,8 @@ fn spawn_runner(
                     config.clone(),
                     status.clone(),
                 );
+                // Cool off a bit if connect rejected, etc.
+                thread::sleep(Duration::from_secs(10));
             }
         }
         status.lock().unwrap().status_changed(TncStatus::Closed);
@@ -217,7 +220,7 @@ fn run_single_conn(
     };
 
     let mut connect = Connect::new();
-    connect.set_address(config.local_callsign.address().to_owned());
+    connect.set_address(config.local_callsign.address());
     connect.set_module(config.module);
     let _ = socket.send_to(connect.as_bytes(), dest);
     let mut converter = VoiceToRf::new();
@@ -263,12 +266,7 @@ fn run_single_conn(
                 }
                 ServerMessage::Ping(_ping) => {
                     let mut pong = Pong::new();
-                    pong.set_address(
-                        M17Address::from_callsign("VK7XT")
-                            .unwrap()
-                            .address()
-                            .clone(),
-                    );
+                    pong.set_address(config.local_callsign.address());
                     if socket.send_to(pong.as_bytes(), dest).is_err() {
                         break;
                     }

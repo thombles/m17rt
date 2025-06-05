@@ -2,7 +2,7 @@
 
 use std::{
     io::{self, ErrorKind, Read},
-    sync::{mpsc::Receiver, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc::Receiver},
 };
 
 #[derive(Clone)]

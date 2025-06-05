@@ -185,7 +185,7 @@ macro_rules! impl_address {
                 crate::address::decode_address(self.0[$from..($from + 6)].try_into().unwrap())
             }
 
-            pub fn set_address(&mut self, address: Address) {
+            pub fn set_address(&mut self, address: &Address) {
                 let encoded = crate::address::encode_address(&address);
                 self.0[$from..($from + 6)].copy_from_slice(&encoded);
                 self.recalculate_crc();

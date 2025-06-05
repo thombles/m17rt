@@ -73,7 +73,7 @@ impl<'a> BitsMut<'a> {
     }
 
     pub(crate) fn set_bit(&mut self, idx: usize, value: u8) {
-        let slice = &mut self.0 .0;
+        let slice = &mut self.0.0;
         let existing = slice[idx / 8];
         if value == 0 {
             slice[idx / 8] = existing & !(1 << (7 - (idx % 8)));

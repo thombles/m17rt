@@ -1,16 +1,16 @@
 use std::{
     borrow::Borrow,
     sync::{
-        mpsc::{sync_channel, Receiver, SyncSender},
         Arc, RwLock,
+        mpsc::{Receiver, SyncSender, sync_channel},
     },
     time::{Duration, Instant},
 };
 
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
     BuildStreamError, DevicesError, PlayStreamError, SampleFormat, SampleRate, Stream, StreamError,
     SupportedStreamConfigRange, SupportedStreamConfigsError,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use thiserror::Error;
 

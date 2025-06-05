@@ -3,7 +3,7 @@ use crate::{
     fec::{self, p_1, p_2, p_3},
     interleave::interleave,
     protocol::{
-        LsfFrame, PacketFrame, PacketFrameCounter, StreamFrame, LSF_SYNC, PACKET_SYNC, STREAM_SYNC,
+        LSF_SYNC, LsfFrame, PACKET_SYNC, PacketFrame, PacketFrameCounter, STREAM_SYNC, StreamFrame,
     },
     random::random_xor,
 };

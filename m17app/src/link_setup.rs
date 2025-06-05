@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use m17core::{
-    address::{Address, Callsign, ALPHABET},
+    address::{ALPHABET, Address, Callsign},
     protocol::LsfFrame,
 };
 

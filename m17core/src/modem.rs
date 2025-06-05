@@ -1,5 +1,5 @@
 use crate::decode::{
-    parse_lsf, parse_packet, parse_stream, sync_burst_correlation, SyncBurst, SYNC_THRESHOLD,
+    SYNC_THRESHOLD, SyncBurst, parse_lsf, parse_packet, parse_stream, sync_burst_correlation,
 };
 use crate::encode::{
     encode_lsf, encode_packet, encode_stream, generate_end_of_transmission, generate_preamble,
