@@ -72,6 +72,10 @@ fn main() {
     let input = args.get_one::<String>("input");
     let output = args.get_one::<String>("output");
 
+    // It is current convention that mrefd requires the destination of transmissions to match the reflector.
+    // If you are connected to "M17-XXX" on module B then you must set the dst to "M17-XXX B".
+    // This requirement is likely to change but for the purposes of this test client we'll hard-code the
+    // behaviour for the time being.
     let ref_with_mod = format!("{} {}", reflector, module);
     let Ok(reflector) = M17Address::from_callsign(&ref_with_mod) else {
         println!(
