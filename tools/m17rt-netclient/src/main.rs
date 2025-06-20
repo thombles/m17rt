@@ -1,6 +1,6 @@
 use std::{io::stdin, sync::Arc};
 
-use clap::{Arg, value_parser};
+use clap::Parser;
 use m17app::{
     adapter::StreamAdapter,
     app::M17App,
@@ -9,74 +9,42 @@ use m17app::{
 };
 use m17codec2::{rx::Codec2RxAdapter, tx::Codec2TxAdapter};
 
-fn main() {
-    let args = clap::Command::new("m17rt-netclient")
-        .arg(
-            Arg::new("hostname")
-                .long("hostname")
-                .short('s')
-                .required(true)
-                .help("Domain or IP of reflector"),
-        )
-        .arg(
-            Arg::new("port")
-                .long("port")
-                .short('p')
-                .value_parser(value_parser!(u16))
-                .default_value("17000")
-                .help("Reflector listening port"),
-        )
-        .arg(
-            Arg::new("callsign")
-                .long("callsign")
-                .short('c')
-                .value_parser(valid_callsign)
-                .required(true)
-                .help("Your callsign for reflector registration and transmissions"),
-        )
-        .arg(
-            Arg::new("reflector")
-                .long("reflector")
-                .short('r')
-                .value_parser(valid_callsign)
-                .required(true)
-                .help("Reflector designator/callsign, often starting with 'M17-'"),
-        )
-        .arg(
-            Arg::new("module")
-                .long("module")
-                .short('m')
-                .value_parser(valid_module)
-                .required(true)
-                .help("Module to connect to (A-Z)"),
-        )
-        .arg(
-            Arg::new("input")
-                .long("input")
-                .short('i')
-                .help("Soundcard name for microphone, otherwise system default"),
-        )
-        .arg(
-            Arg::new("output")
-                .long("output")
-                .short('o')
-                .help("Soundcard name for speaker, otherwise system default"),
-        )
-        .get_matches();
+#[derive(Parser)]
+struct Args {
+    #[arg(short = 's', help = "Domain or IP of reflector")]
+    hostname: String,
+    #[arg(
+        short = 'p',
+        default_value = "17000",
+        help = "Reflector listening port"
+    )]
+    port: u16,
+    #[arg(short = 'c', value_parser = valid_callsign, help = "Your callsign for reflector registration and transmissions")]
+    callsign: M17Address,
+    #[arg(short = 'r', value_parser = valid_callsign, help = "Reflector designator/callsign, often starting with 'M17-'")]
+    reflector: M17Address,
+    #[arg(short = 'm', value_parser = valid_module, help = "Module to connect to (A-Z)")]
+    module: char,
+    #[arg(
+        short = 'i',
+        help = "Soundcard name for microphone, otherwise system default"
+    )]
+    input: Option<String>,
+    #[arg(
+        short = 'o',
+        help = "Soundcard name for speaker, otherwise system default"
+    )]
+    output: Option<String>,
+}
 
-    let hostname = args.get_one::<String>("hostname").unwrap();
-    let port = args.get_one::<u16>("port").unwrap();
-    let callsign = args.get_one::<M17Address>("callsign").unwrap();
-    let reflector = args.get_one::<M17Address>("reflector").unwrap();
-    let module = args.get_one::<char>("module").unwrap();
-    let input = args.get_one::<String>("input");
-    let output = args.get_one::<String>("output");
+fn main() {
+    let args = Args::parse();
 
     // It is current convention that mrefd requires the destination of transmissions to match the reflector.
     // If you are connected to "M17-XXX" on module B then you must set the dst to "M17-XXX B".
     // This requirement is likely to change but for the purposes of this test client we'll hard-code the
     // behaviour for the time being.
-    let ref_with_mod = format!("{} {}", reflector, module);
+    let ref_with_mod = format!("{} {}", args.reflector, args.module);
     let Ok(reflector) = M17Address::from_callsign(&ref_with_mod) else {
         println!(
             "Unable to create valid destination address for reflector + callsign '{ref_with_mod}'"
@@ -84,22 +52,22 @@ fn main() {
         std::process::exit(1);
     };
 
-    let mut tx = Codec2TxAdapter::new(callsign.clone(), reflector);
-    if let Some(input) = input {
+    let mut tx = Codec2TxAdapter::new(args.callsign.clone(), reflector);
+    if let Some(input) = args.input {
         tx.set_input_card(input);
     }
     let ptt = tx.ptt();
 
     let mut rx = Codec2RxAdapter::new();
-    if let Some(output) = output {
+    if let Some(output) = args.output {
         rx.set_output_card(output);
     }
 
     let config = ReflectorClientConfig {
-        hostname: hostname.clone(),
-        port: *port,
-        module: *module,
-        local_callsign: callsign.clone(),
+        hostname: args.hostname,
+        port: args.port,
+        module: args.module,
+        local_callsign: args.callsign,
     };
     let tnc = ReflectorClientTnc::new(config, ConsoleStatusHandler);
     let app = M17App::new(tnc);

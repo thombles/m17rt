@@ -7,6 +7,6 @@ authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
 publish = false
 
 [dependencies]
-clap = "4.5.39"
+clap = { version = "4.5.39", features = ["derive"] }
 m17app = { path = "../../m17app" }
 m17codec2 = { path = "../../m17codec2" }
