@@ -12,11 +12,11 @@ use std::{
 
 use crate::{link_setup::M17Address, tnc::Tnc, util::out_buffer::OutBuffer};
 use m17core::{
-    kiss::{KissBuffer, KissCommand, KissFrame, PORT_STREAM},
+    kiss::{KissBuffer, KissCommand, KissFrame, PORT_PACKET_BASIC, PORT_PACKET_FULL, PORT_STREAM},
     protocol::{LsfFrame, StreamFrame},
     reflector::{
         convert::{RfToVoice, VoiceToRf},
-        packet::{Connect, Pong, ServerMessage, Voice},
+        packet::{Connect, Packet, Pong, ServerMessage, Voice},
     },
 };
 
@@ -82,7 +82,7 @@ impl Write for ReflectorClientTnc {
         let sz = buf.len().min(rem.len());
         rem[0..sz].copy_from_slice(&buf[0..sz]);
         kiss.did_write(sz);
-        if let Some(frame) = kiss.next_frame() {
+        while let Some(frame) = kiss.next_frame() {
             if Ok(KissCommand::DataFrame) == frame.command() && frame.port() == Ok(PORT_STREAM) {
                 let mut payload = [0u8; 30];
                 if let Ok(len) = frame.decode_payload(&mut payload) {
@@ -111,6 +111,28 @@ impl Write for ReflectorClientTnc {
                         }
                     }
                 };
+            } else if Ok(KissCommand::DataFrame) == frame.command()
+                && frame.port() == Ok(PORT_PACKET_BASIC)
+            {
+                // basic packets not supported for now, they will require more config
+            } else if Ok(KissCommand::DataFrame) == frame.command()
+                && frame.port() == Ok(PORT_PACKET_FULL)
+            {
+                let mut payload = [0u8; 855];
+                let Ok(len) = frame.decode_payload(&mut payload) else {
+                    continue;
+                };
+                if len < 33 {
+                    continue;
+                }
+                let mut lsf = LsfFrame([0u8; 30]);
+                lsf.0.copy_from_slice(&payload[0..30]);
+                if lsf.check_crc() != 0 {
+                    continue;
+                }
+                let mut packet = Packet::new();
+                packet.set_link_setup_frame(&lsf);
+                packet.set_payload(&payload[30..]);
             }
         }
         Ok(sz)
@@ -263,6 +285,13 @@ fn run_single_conn(
                     }
                     let kiss = KissFrame::new_stream_data(&stream).unwrap();
                     let _ = kiss_out_tx.send(kiss.as_bytes().into());
+                }
+                ServerMessage::Packet(packet) => {
+                    if let Ok(kiss) =
+                        KissFrame::new_full_packet(&packet.link_setup_frame().0, packet.payload())
+                    {
+                        let _ = kiss_out_tx.send(kiss.as_bytes().into());
+                    }
                 }
                 ServerMessage::Ping(_ping) => {
                     let mut pong = Pong::new();
