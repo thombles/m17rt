@@ -2,7 +2,7 @@
 
 Part of the [M17 Rust Toolkit](https://octet-stream.net/p/m17rt/).
 
-This crate includes a modulator, demodulator, TNC, M17 data link parsing and encoding, KISS protocol handling, and other protocol utilities. It can be used to create an M17 transmitter or receiver, however you will have to connect everything together yourself. If possible, consider using the higher-level crate `m17app`.
+This crate includes a modulator, demodulator, TNC, M17 data link parsing and encoding, KISS protocol handling, UDP reflector packet formats, and other protocol utilities. It can be used to create an M17 transmitter or receiver, however you will have to connect everything together yourself. If possible, consider using the higher-level crate `m17app`.
 
 `m17core` is `no_std`, does not perform any heap allocations, and its protocol implementations are non-blocking and sans-I/O.
 

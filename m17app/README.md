@@ -6,17 +6,18 @@ Part of the [M17 Rust Toolkit](https://octet-stream.net/p/m17rt/). This crate pr
 
 ## Creating an `M17App`
 
-The most important type is `M17App`. This is what your program can use to transmit packets and streams, or to subscribe to incoming packets and streams. To create an `M17App` you must provide it with a TNC, which is any type that implements the trait `Tnc`. This could be a `TcpStream` to another TNC device exposed to the network or it could be an instance of the built-in `Soundmodem`.
+The most important type is `M17App`. This is what your program can use to transmit packets and streams, or to subscribe to incoming packets and streams. To create an `M17App` you must provide it with a TNC, which is any type that implements the trait `Tnc`. This could be a `TcpStream` to another TNC device exposed to the network or it could be an instance of the built-in `Soundmodem`. To connect to reflector like `mrefd` you can use the provided `ReflectorClientTnc`.
 
 ## Creating a `Soundmodem`
 
 A `Soundmodem` can use soundcards in your computer to send and receive M17 baseband signals via a radio. More generally it can accept input samples from any compatible source, and provide output samples to any compatible sink, and it will coordinate the modem and TNC in realtime in a background thread.
 
-A `Soundmodem` requires three parameters:
+A `Soundmodem` requires four parameters:
 
 * **Input source** - the signal we are receiving
 * **Output sink** - somewhere to send the modulated signal we want to transmit
 * **PTT** - a transmit switch that can be turned on or off
+* **Error handler** - a callback that tells you if problems occur during operation
 
 These are all traits that you can implement yourself but you can probably use one of the types already included in `m17app`.
 
@@ -38,14 +39,20 @@ Provided PTTs:
 * `SerialPtt` - Use a serial/COM port with either the RTS or DTR pin to activate PTT.
 * `NullPtt` - Fake device that will not control any real PTT.
 
+Provided error handlers:
+
+* `StdoutErrorHandler` - Basic handler that will print events as they occur.
+* `LogErrorHandler` - Uses the common `log` facility to record the event at DEBUG level.
+* `NullErrorHandler` - Ignore errors.
+
 For `Soundcard` you will need to identify the soundcard by a string name. The format of this card name is specific to the audio library used (`cpal`). Use `Soundcard::supported_input_cards()` and `Soundcard::supported_output_cards()` to list compatible devices. The bundled utility `m17rt-soundcards` may be useful. Similarly, `SerialPtt::available_ports()` lists the available serial ports.
 
 If you're using a Digirig on a Linux PC, M17 setup might look like this:
 
 ```rust,ignore
     let soundcard = Soundcard::new("plughw:CARD=Device,DEV=0").unwrap();
-    let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts);
-    let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt);
+    let ptt = SerialPtt::new("/dev/ttyUSB0", PttPin::Rts).unwrap();
+    let soundmodem = Soundmodem::new(soundcard.input(), soundcard.output(), ptt, StdoutErrorHandler);
     let app = M17App::new(soundmodem);
     app.start();
 ```
@@ -70,7 +77,8 @@ Transmissions are made via a `TxHandle`, which you can create by calling `app.tx
 ```rust,ignore
     let payload = b"Hello, world!";
     app.tx()
-        .transmit_packet(&link_setup, PacketType::Sms, payload);
+        .transmit_packet(&link_setup, PacketType::Sms, payload)
+        .unwrap();
 ```
 
 Next let's see how to receive a packet. To subscribe to incoming packets you need to provide a subscriber that implements the trait `PacketAdapter`. This includes a number of lifecycle methods which are optional to implement. In this case we will handle `packet_received` and print a summary of the received packet and its contents to stdout.
@@ -95,7 +103,7 @@ impl PacketAdapter for PacketPrinter {
 We instantiate one of these subscribers and provide it to our instance of `M17App`.
 
 ```rust,ignore
-    app.add_packet_adapter(PacketPrinter);
+    app.add_packet_adapter(PacketPrinter).unwrap();
 ```
 
 Note that if the adapter also implemented `adapter_registered`, then it would receive a copy of `TxHandle`. This allows you to create self-contained adapter implementations that can both transmit and receive.
@@ -111,7 +119,23 @@ For our first example, let's see how to use the `m17codec2` helper crate to send
 The following line will register an adapter that monitors incoming M17 streams, attempts to decode the Codec2, and play the decoded audio on the default system sound card.
 
 ```rust,ignore
-    app.add_stream_adapter(Codec2Adapter::new());
+    // optionally call set_output_card(...) on the adapter
+    app.add_stream_adapter(Codec2RxAdapter::new()).unwrap();
+```
+
+This is how you set up to transmit Codec2 audio:
+
+```rust,ignore
+    // optionally call set_input_card(...) on the adapter
+    let mut tx = Codec2TxAdapter::new(args.callsign.clone(), reflector);
+    let ptt = tx.ptt();
+    app.add_stream_adapter(tx).unwrap();
+```
+
+Later, after you have called `start()`:
+
+```rust,ignore
+    ptt.set_ptt(true);
 ```
 
 This is how to transmit a wave file of human speech (8 kHz, mono, 16 bit LE) as a Codec2 stream:
@@ -140,4 +164,4 @@ To receive:
 
 * Create an adapter that implements trait `StreamAdapter`
 * Handle the `stream_began` and `stream_data` methods
-* Add it to your `M17App`
+* Add it to your `M17App` with `add_stream_adapter`
