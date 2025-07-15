@@ -212,7 +212,7 @@ pub(crate) fn decode(
     type3: &[u8], // up to len 46
     input_len: usize,
     puncture: fn(usize) -> (bool, bool),
-) -> Option<[u8; 30]> {
+) -> Option<([u8; 30], u8)> {
     let type3_bits = Bits::new(type3);
     let mut type3_iter = type3_bits.iter();
     let mut table = [[0u8; 32]; 244];
@@ -266,7 +266,7 @@ pub(crate) fn decode(
                 };
             }
         }
-        Some(out)
+        Some((out, *best))
     }
 }
 
@@ -332,7 +332,7 @@ mod tests {
         let encoded = encode(&lsf, 240, p_1);
         assert_eq!(encoded, expected_encoded);
         let decoded = decode(&encoded, 240, p_1);
-        assert_eq!(decoded, Some(lsf));
+        assert_eq!(decoded, Some((lsf, 0)));
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
             if idx == 100 {
                 assert_eq!(decoded, None); // 7 bits is too much damage
             } else {
-                assert_eq!(decoded, Some(lsf)); // recovered from errors
+                assert!(matches!(decoded, Some((frame, _)) if frame == lsf)); // recovered from errors
             }
         }
     }

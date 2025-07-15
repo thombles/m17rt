@@ -1,0 +1,14 @@
+[package]
+name = "m17rt-fastdemod"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com"]
+publish = false
+
+[dependencies]
+m17core = { path = "../../m17core" }
+
+clap = { version = "4.5.39", features = ["derive"] }
+env_logger = "0.11.6"
+log = "0.4.22"

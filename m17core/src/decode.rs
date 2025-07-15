@@ -91,11 +91,11 @@ pub(crate) fn frame_initial_decode(frame: &[f32] /* length 192 */) -> [u8; 46] {
     interleave(&decoded[2..])
 }
 
-pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<LsfFrame> {
+pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<(LsfFrame, u8)> {
     let deinterleaved = frame_initial_decode(frame);
     debug!("deinterleaved: {:?}", deinterleaved);
-    let lsf = match fec::decode(&deinterleaved, 240, p_1) {
-        Some(lsf) => LsfFrame(lsf),
+    let (lsf, errors) = match fec::decode(&deinterleaved, 240, p_1) {
+        Some((lsf, errors)) => (LsfFrame(lsf), errors),
         None => return None,
     };
     debug!("full lsf: {:?}", lsf.0);
@@ -108,13 +108,13 @@ pub(crate) fn parse_lsf(frame: &[f32] /* length 192 */) -> Option<LsfFrame> {
     debug!("encryption type: {:?}", lsf.encryption_type());
     debug!("can: {}", lsf.channel_access_number());
     debug!("meta: {:?}", lsf.meta());
-    Some(lsf)
+    Some((lsf, errors))
 }
 
-pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame> {
+pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<(StreamFrame, u8)> {
     let deinterleaved = frame_initial_decode(frame);
     let stream_part = &deinterleaved[12..];
-    let stream = fec::decode(stream_part, 144, p_2)?;
+    let (stream, errors) = fec::decode(stream_part, 144, p_2)?;
     let frame_num = u16::from_be_bytes([stream[0], stream[1]]);
     let eos = (frame_num & 0x8000) > 0;
     let frame_num = frame_num & 0x7fff; // higher layer has to handle wraparound
@@ -125,21 +125,24 @@ pub(crate) fn parse_stream(frame: &[f32] /* length 192 */) -> Option<StreamFrame
             "LICH: received part {counter} part {part:?} from raw {:?}",
             &deinterleaved[0..12]
         );
-        Some(StreamFrame {
-            lich_idx: counter,
-            lich_part: part,
-            frame_number: frame_num,
-            end_of_stream: eos,
-            stream_data: stream[2..18].try_into().unwrap(),
-        })
+        Some((
+            StreamFrame {
+                lich_idx: counter,
+                lich_part: part,
+                frame_number: frame_num,
+                end_of_stream: eos,
+                stream_data: stream[2..18].try_into().unwrap(),
+            },
+            errors,
+        ))
     } else {
         None
     }
 }
 
-pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame> {
+pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<(PacketFrame, u8)> {
     let deinterleaved = frame_initial_decode(frame);
-    let packet = fec::decode(&deinterleaved, 206, p_3)?;
+    let (packet, errors) = fec::decode(&deinterleaved, 206, p_3)?;
     let final_frame = (packet[25] & 0x80) > 0;
     let number = (packet[25] >> 2) & 0x1f;
     let counter = if final_frame {
@@ -151,10 +154,13 @@ pub(crate) fn parse_packet(frame: &[f32] /* length 192 */) -> Option<PacketFrame
             index: number as usize,
         }
     };
-    Some(PacketFrame {
-        payload: packet[0..25].try_into().unwrap(),
-        counter,
-    })
+    Some((
+        PacketFrame {
+            payload: packet[0..25].try_into().unwrap(),
+            counter,
+        },
+        errors,
+    ))
 }
 
 pub(crate) fn decode_lich(type2_bits: &[u8]) -> Option<(u8, [u8; 5])> {

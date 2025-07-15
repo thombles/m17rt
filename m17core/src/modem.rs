@@ -9,7 +9,11 @@ use crate::shaping::RRC_48K;
 use log::debug;
 
 pub trait Demodulator {
-    fn demod(&mut self, sample: i16) -> Option<Frame>;
+    /// Handle the next sample.
+    ///
+    /// If a frame can be decoded, return it, along with an indication of many errors were fixed by FEC.
+    fn demod(&mut self, sample: i16) -> Option<(Frame, u8)>;
+    /// Does somebody else appear to be transmitting at the moment?
     fn data_carrier_detect(&self) -> bool;
 }
 
@@ -67,7 +71,7 @@ impl SoftDemodulator {
 }
 
 impl Demodulator for SoftDemodulator {
-    fn demod(&mut self, sample: i16) -> Option<Frame> {
+    fn demod(&mut self, sample: i16) -> Option<(Frame, u8)> {
         self.filter_win[self.filter_cursor] = sample;
         self.filter_cursor = (self.filter_cursor + 1) % 81;
         let mut out: f32 = 0.0;
@@ -102,21 +106,21 @@ impl Demodulator for SoftDemodulator {
                 }
                 match c.burst {
                     SyncBurst::Lsf => {
-                        if let Some(frame) = parse_lsf(&pkt_samples) {
-                            return Some(Frame::Lsf(frame));
+                        if let Some((frame, errors)) = parse_lsf(&pkt_samples) {
+                            return Some((Frame::Lsf(frame), errors));
                         }
                     }
                     SyncBurst::Bert => {
                         // TODO: BERT
                     }
                     SyncBurst::Stream => {
-                        if let Some(frame) = parse_stream(&pkt_samples) {
-                            return Some(Frame::Stream(frame));
+                        if let Some((frame, errors)) = parse_stream(&pkt_samples) {
+                            return Some((Frame::Stream(frame), errors));
                         }
                     }
                     SyncBurst::Packet => {
-                        if let Some(frame) = parse_packet(&pkt_samples) {
-                            return Some(Frame::Packet(frame));
+                        if let Some((frame, errors)) = parse_packet(&pkt_samples) {
+                            return Some((Frame::Packet(frame), errors));
                         }
                     }
                     SyncBurst::Preamble | SyncBurst::EndOfTransmission => {

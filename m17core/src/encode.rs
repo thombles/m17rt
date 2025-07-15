@@ -113,7 +113,7 @@ mod tests {
         ]);
         let encoded = encode_lsf(&lsf);
         let decoded = crate::decode::parse_lsf(&encoded);
-        assert_eq!(decoded, Some(lsf));
+        assert!(matches!(decoded, Some((frame, _)) if frame == lsf));
     }
 
     #[test]
@@ -127,7 +127,7 @@ mod tests {
         };
         let encoded = encode_stream(&stream);
         let decoded = crate::decode::parse_stream(&encoded);
-        assert_eq!(decoded, Some(stream));
+        assert!(matches!(decoded, Some((frame, _)) if frame == stream));
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod tests {
         };
         let encoded = encode_packet(&packet);
         let decoded = crate::decode::parse_packet(&encoded);
-        assert_eq!(decoded, Some(packet));
+        assert!(matches!(decoded, Some((frame, _)) if frame == packet));
 
         let packet = PacketFrame {
             payload: [0u8; 25],
@@ -146,7 +146,7 @@ mod tests {
         };
         let encoded = encode_packet(&packet);
         let decoded = crate::decode::parse_packet(&encoded);
-        assert_eq!(decoded, Some(packet));
+        assert!(matches!(decoded, Some((frame, _)) if frame == packet));
     }
 
     #[test]

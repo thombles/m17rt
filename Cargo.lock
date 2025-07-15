@@ -548,6 +548,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "m17rt-fastdemod"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "env_logger",
+ "log",
+ "m17core",
+]
+
+[[package]]
 name = "m17rt-mod"
 version = "0.1.0"
 dependencies = [

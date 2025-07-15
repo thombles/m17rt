@@ -234,7 +234,7 @@ fn spawn_soundmodem_worker(
                 }
                 SoundmodemEvent::BasebandInput(b) => {
                     for sample in &*b {
-                        if let Some(frame) = demodulator.demod(*sample) {
+                        if let Some((frame, _)) = demodulator.demod(*sample) {
                             tnc.handle_frame(frame);
                             loop {
                                 let n = tnc.read_kiss(&mut buf);

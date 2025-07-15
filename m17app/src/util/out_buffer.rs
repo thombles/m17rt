@@ -1,7 +1,7 @@
 //! Buffer between `read()` calls
 
 use std::{
-    io::{self, ErrorKind, Read},
+    io::{self, Read},
     sync::{Arc, Mutex, mpsc::Receiver},
 };
 
@@ -49,7 +49,7 @@ impl Read for OutBuffer {
         let output = {
             let rx = self.rx.lock().unwrap();
             rx.recv()
-                .map_err(|s| io::Error::new(ErrorKind::Other, format!("{:?}", s)))?
+                .map_err(|s| io::Error::other(format!("{:?}", s)))?
         };
         let to_write = output.len().min(buf.len());
         buf[0..to_write].copy_from_slice(&output[0..to_write]);
