@@ -35,6 +35,12 @@ pub struct SoftDemodulator {
     samples_until_decode: Option<u16>,
     /// Do we think there is a data carrier, i.e., channel in use? If so, at what sample does it expire?
     dcd: Option<u64>,
+
+    lms_taps: [f32; 32],
+    lms_win: [f32; 32],
+    lms_cursor: usize,
+    mag_hist: [f32; 1024],
+    mag_filled: usize,
 }
 
 impl SoftDemodulator {
@@ -48,6 +54,11 @@ impl SoftDemodulator {
             sample: 0,
             samples_until_decode: None,
             dcd: None,
+            lms_taps: [0f32; 32],
+            lms_win: [0f32; 32],
+            lms_cursor: 0,
+            mag_hist: [0f32; 1024],
+            mag_filled: 0,
         }
     }
 }
@@ -79,6 +90,19 @@ impl Demodulator for SoftDemodulator {
             let filter_idx = (self.filter_cursor + i) % 81;
             out += RRC_48K[i] * self.filter_win[filter_idx] as f32;
         }
+
+        // LMS goes here
+        // Basic steps I have in mind:
+
+        // First use the magnitude history to calculate a scaling factor
+
+        // Then apply LMS with existing taps to get next value
+
+        // Make a decision about which symbol we're seeing
+
+        // Calculate the normalised error
+
+        // Update the LMS taps
 
         self.rx_win[self.rx_cursor] = out;
         self.rx_cursor = (self.rx_cursor + 1) % 1920;
