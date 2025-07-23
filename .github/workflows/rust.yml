@@ -3,6 +3,9 @@ name: Rust
 on:
   push:
 
+permissions:
+  security-events: write
+
 env:
   CARGO_TERM_COLOR: always
 
