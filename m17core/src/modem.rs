@@ -36,15 +36,19 @@ pub struct SoftDemodulator {
     /// Do we think there is a data carrier, i.e., channel in use? If so, at what sample does it expire?
     dcd: Option<u64>,
 
-    lms_taps: [f32; 32],
-    lms_win: [f32; 32],
+    lms_taps: [f32; 33],
+    lms_win: [f32; 33],
     lms_cursor: usize,
-    mag_hist: [f32; 1024],
+    mag_hist: [f32; 48000],
+    mag_cursor: usize,
     mag_filled: usize,
 }
 
 impl SoftDemodulator {
     pub fn new() -> Self {
+        let mut lms_taps = [0f32; 33];
+        lms_taps[16] = 1.0;
+
         SoftDemodulator {
             filter_win: [0i16; 81],
             filter_cursor: 0,
@@ -54,10 +58,11 @@ impl SoftDemodulator {
             sample: 0,
             samples_until_decode: None,
             dcd: None,
-            lms_taps: [0f32; 32],
-            lms_win: [0f32; 32],
+            lms_taps,
+            lms_win: [0f32; 33],
             lms_cursor: 0,
-            mag_hist: [0f32; 1024],
+            mag_hist: [0f32; 48000],
+            mag_cursor: 0,
             mag_filled: 0,
         }
     }
@@ -91,18 +96,49 @@ impl Demodulator for SoftDemodulator {
             out += RRC_48K[i] * self.filter_win[filter_idx] as f32;
         }
 
-        // LMS goes here
-        // Basic steps I have in mind:
+        // only apply and train LMS when we think something is transmitting
+        if self.dcd.is_some() {
+            log::info!("dcd on LMS taps are {:?}", self.lms_taps);
+            self.mag_hist[self.mag_cursor] = out;
+            self.mag_filled = self.mag_hist.len().min(self.mag_filled + 1);
+            self.mag_cursor = (self.mag_cursor + 1) % 48000;
 
-        // First use the magnitude history to calculate a scaling factor
+            let target_top = 16000f32;
+            let top = self.mag_hist[0..self.mag_filled].iter().cloned().reduce(f32::max).unwrap();
+            out = out * (target_top / top);
 
-        // Then apply LMS with existing taps to get next value
+            // Then apply LMS with existing taps to get next value
+            let mut lms_out = 0.0;
+            for i in 0..33 {
+                let buf_idx = (self.lms_cursor + 33 - i) % 33;
+                lms_out += self.lms_taps[i] * self.lms_win[buf_idx];
+            }
 
-        // Make a decision about which symbol we're seeing
+            // Make a decision about which symbol we're seeing
+            let threshold_high = target_top * 0.9;
+            let threshold_low = target_top * 0.4;
+            let guessed_symbol = if lms_out > threshold_high {
+                3.0
+            } else if lms_out > threshold_low {
+                1.0
+            } else if lms_out > -threshold_low {
+                -1.0
+            } else {
+                -3.0
+            };
+            let target = target_top / 3.0 * guessed_symbol;
+            let error = target - lms_out;
+            let error_norm = error / (top * top + 1.0);
 
-        // Calculate the normalised error
+            let mu = 0.3;
 
-        // Update the LMS taps
+            for i in 0..33 {
+                let buf_idx = (self.lms_cursor + 33 -i - 1) % 33;
+                self.lms_taps[i] = mu * error_norm * self.lms_win[buf_idx];
+            }
+        }
+
+        
 
         self.rx_win[self.rx_cursor] = out;
         self.rx_cursor = (self.rx_cursor + 1) % 1920;
